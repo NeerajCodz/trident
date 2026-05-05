@@ -94,6 +94,13 @@ impl MemTable {
             .collect()
     }
 
+    pub fn latest_sequence(&self, cf: &ColumnFamily, key: &[u8]) -> Option<SequenceNumber> {
+        self.entries
+            .get(&(cf.clone(), Bytes::copy_from_slice(key)))
+            .and_then(|versions| versions.last())
+            .map(|version| version.sequence)
+    }
+
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }

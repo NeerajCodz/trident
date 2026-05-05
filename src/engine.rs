@@ -9,6 +9,7 @@ use crate::ram::{MemTable, SnapshotManager};
 use crate::recovery::{GcReport, RecoveryReport, write_checkpoint};
 use crate::segments::bloom::bloom_key;
 use crate::segments::{SegmentReader, SegmentWriteOptions, SegmentWriter};
+use crate::transactions::OptimisticTransaction;
 use crate::transactions::{BatchOp, WriteBatch};
 use crate::types::{ColumnFamily, Key, ReadSnapshot, SequenceNumber, StoredValue, Value, ValueRef};
 use crate::values::ValueLog;
@@ -132,6 +133,19 @@ impl TridentEngine {
             return Err(TridentError::CompareAndSwapFailed);
         }
         self.put(key, value)
+    }
+
+    pub fn begin_transaction(&self) -> OptimisticTransaction {
+        OptimisticTransaction::new(self.clone(), self.snapshot())
+    }
+
+    pub(crate) fn commit_optimistic_transaction(
+        &self,
+        snapshot: ReadSnapshot,
+        batch: WriteBatch,
+    ) -> Result<SequenceNumber> {
+        self.validate_transaction_conflicts(snapshot, &batch)?;
+        self.write_batch(batch)
     }
 
     pub fn write_batch(&self, batch: WriteBatch) -> Result<SequenceNumber> {
@@ -292,6 +306,44 @@ impl TridentEngine {
             self.ensure_column_family(cf)?;
         }
         Ok(())
+    }
+
+    fn validate_transaction_conflicts(
+        &self,
+        snapshot: ReadSnapshot,
+        batch: &WriteBatch,
+    ) -> Result<()> {
+        for op in batch.ops() {
+            let (cf, key) = match op {
+                BatchOp::Put { cf, key, .. } | BatchOp::Delete { cf, key } => (cf, key),
+            };
+            if self.latest_sequence_for_key(cf, key)? > snapshot.sequence {
+                return Err(TridentError::TransactionConflict {
+                    cf: cf.0.clone(),
+                    key: String::from_utf8_lossy(key).to_string(),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn latest_sequence_for_key(&self, cf: &ColumnFamily, key: &[u8]) -> Result<SequenceNumber> {
+        self.ensure_column_family(cf)?;
+        let memtable_sequence = self
+            .inner
+            .memtable
+            .lock()
+            .latest_sequence(cf, key)
+            .unwrap_or_default();
+        let segment_sequence = self
+            .inner
+            .segment_index
+            .lock()
+            .get(&(cf.clone(), Bytes::copy_from_slice(key)))
+            .and_then(|versions| versions.last())
+            .map(|version| version.sequence)
+            .unwrap_or_default();
+        Ok(memtable_sequence.max(segment_sequence))
     }
 
     fn ensure_column_family(&self, cf: &ColumnFamily) -> Result<()> {

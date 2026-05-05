@@ -6,8 +6,15 @@ use std::hash::Hash;
 pub struct BlockCache<K> {
     capacity_bytes: usize,
     current_bytes: usize,
-    order: VecDeque<K>,
-    entries: HashMap<K, Bytes>,
+    clock: u64,
+    order: VecDeque<(K, u64)>,
+    entries: HashMap<K, CacheEntry>,
+}
+
+#[derive(Clone, Debug)]
+struct CacheEntry {
+    value: Bytes,
+    generation: u64,
 }
 
 impl<K> BlockCache<K>
@@ -18,36 +25,88 @@ where
         Self {
             capacity_bytes,
             current_bytes: 0,
+            clock: 0,
             order: VecDeque::new(),
             entries: HashMap::new(),
         }
     }
 
     pub fn get(&mut self, key: &K) -> Option<Bytes> {
-        let value = self.entries.get(key).cloned();
-        if value.is_some() {
-            self.order.push_back(key.clone());
-        }
-        value
+        self.entries.get_mut(key).map(|entry| {
+            self.clock += 1;
+            entry.generation = self.clock;
+            self.order.push_back((key.clone(), entry.generation));
+            entry.value.clone()
+        })
+    }
+
+    pub fn contains_key(&self, key: &K) -> bool {
+        self.entries.contains_key(key)
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub fn current_bytes(&self) -> usize {
+        self.current_bytes
     }
 
     pub fn insert(&mut self, key: K, value: Bytes) {
-        if let Some(old) = self.entries.insert(key.clone(), value.clone()) {
-            self.current_bytes = self.current_bytes.saturating_sub(old.len());
+        self.clock += 1;
+        if let Some(old) = self.entries.insert(
+            key.clone(),
+            CacheEntry {
+                value: value.clone(),
+                generation: self.clock,
+            },
+        ) {
+            self.current_bytes = self.current_bytes.saturating_sub(old.value.len());
         }
         self.current_bytes += value.len();
-        self.order.push_back(key);
+        self.order.push_back((key, self.clock));
         self.evict();
     }
 
     fn evict(&mut self) {
         while self.current_bytes > self.capacity_bytes {
-            let Some(key) = self.order.pop_front() else {
+            let Some((key, generation)) = self.order.pop_front() else {
                 break;
             };
-            if let Some(value) = self.entries.remove(&key) {
-                self.current_bytes = self.current_bytes.saturating_sub(value.len());
+            let is_current = self
+                .entries
+                .get(&key)
+                .is_some_and(|entry| entry.generation == generation);
+            if !is_current {
+                continue;
+            }
+            if let Some(entry) = self.entries.remove(&key) {
+                self.current_bytes = self.current_bytes.saturating_sub(entry.value.len());
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BlockCache;
+    use bytes::Bytes;
+
+    #[test]
+    fn cache_does_not_evict_fresh_generation_from_stale_queue_entry() {
+        let mut cache = BlockCache::new(10);
+        cache.insert("a", Bytes::from_static(b"aaaa"));
+        cache.insert("b", Bytes::from_static(b"bbbb"));
+        assert_eq!(cache.get(&"a"), Some(Bytes::from_static(b"aaaa")));
+        cache.insert("c", Bytes::from_static(b"cccc"));
+
+        assert!(cache.contains_key(&"a"));
+        assert!(!cache.contains_key(&"b"));
+        assert!(cache.contains_key(&"c"));
+        assert!(cache.current_bytes() <= 10);
     }
 }

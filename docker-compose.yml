@@ -1,0 +1,12 @@
+services:
+  trident:
+    build:
+      context: .
+      target: runtime
+    ports:
+      - "7070:7070"
+    volumes:
+      - trident-data:/var/lib/trident
+
+volumes:
+  trident-data:

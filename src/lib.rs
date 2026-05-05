@@ -12,6 +12,7 @@ pub mod metrics;
 pub mod ram;
 pub mod recovery;
 pub mod segments;
+pub mod server;
 pub mod transactions;
 pub mod types;
 pub mod values;

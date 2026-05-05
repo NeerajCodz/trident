@@ -2,7 +2,7 @@ use crate::config::TridentConfig;
 use crate::errors::Result;
 use crate::io::{read_file_with_policy, write_file_with_policy};
 use crate::manifest::model::Manifest;
-use std::fs;
+use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug)]

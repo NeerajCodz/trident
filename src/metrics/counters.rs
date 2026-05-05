@@ -1,0 +1,41 @@
+use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+#[derive(Debug, Default)]
+pub struct EngineMetrics {
+    pub writes: AtomicU64,
+    pub reads: AtomicU64,
+    pub deletes: AtomicU64,
+    pub wal_records: AtomicU64,
+    pub segment_flushes: AtomicU64,
+    pub cache_hits: AtomicU64,
+    pub cache_misses: AtomicU64,
+    pub recovered_records: AtomicU64,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct EngineMetricsSnapshot {
+    pub writes: u64,
+    pub reads: u64,
+    pub deletes: u64,
+    pub wal_records: u64,
+    pub segment_flushes: u64,
+    pub cache_hits: u64,
+    pub cache_misses: u64,
+    pub recovered_records: u64,
+}
+
+impl EngineMetrics {
+    pub fn snapshot(&self) -> EngineMetricsSnapshot {
+        EngineMetricsSnapshot {
+            writes: self.writes.load(Ordering::Relaxed),
+            reads: self.reads.load(Ordering::Relaxed),
+            deletes: self.deletes.load(Ordering::Relaxed),
+            wal_records: self.wal_records.load(Ordering::Relaxed),
+            segment_flushes: self.segment_flushes.load(Ordering::Relaxed),
+            cache_hits: self.cache_hits.load(Ordering::Relaxed),
+            cache_misses: self.cache_misses.load(Ordering::Relaxed),
+            recovered_records: self.recovered_records.load(Ordering::Relaxed),
+        }
+    }
+}

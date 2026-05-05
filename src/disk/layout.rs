@@ -35,6 +35,10 @@ impl DiskLayout {
         self.root.join("wal").join(format!("{id:020}.wal"))
     }
 
+    pub fn wal_root(&self) -> PathBuf {
+        self.root.join("wal")
+    }
+
     pub fn segment_path(&self, level: u32, id: u64) -> PathBuf {
         self.root
             .join("segments")

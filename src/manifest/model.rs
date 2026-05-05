@@ -9,6 +9,10 @@ pub struct Manifest {
     pub format_version: u32,
     #[serde(default)]
     pub effective_config: PersistedEngineConfig,
+    #[serde(default = "default_active_wal_id")]
+    pub active_wal_id: u64,
+    #[serde(default = "default_next_wal_id")]
+    pub next_wal_id: u64,
     pub last_sequence: u64,
     pub next_segment_id: u64,
     pub latest_checkpoint: Option<CheckpointMetadata>,
@@ -21,6 +25,8 @@ impl Manifest {
         Self {
             format_version: 1,
             effective_config: config.persisted(),
+            active_wal_id: 1,
+            next_wal_id: 2,
             last_sequence: 0,
             next_segment_id: 1,
             latest_checkpoint: None,
@@ -28,6 +34,14 @@ impl Manifest {
             segments: Vec::new(),
         }
     }
+}
+
+fn default_active_wal_id() -> u64 {
+    1
+}
+
+fn default_next_wal_id() -> u64 {
+    2
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

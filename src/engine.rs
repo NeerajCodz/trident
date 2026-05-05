@@ -3,7 +3,7 @@ use crate::cache::BlockCache;
 use crate::config::{AcceleratorBackend, TridentConfig};
 use crate::disk::DiskLayout;
 use crate::errors::{Result, TridentError};
-use crate::manifest::{CheckpointMetadata, Manifest, ManifestStore};
+use crate::manifest::{CheckpointMetadata, ColumnFamilyDescriptor, Manifest, ManifestStore};
 use crate::metrics::EngineMetrics;
 use crate::ram::{MemTable, SnapshotManager};
 use crate::recovery::{GcReport, RecoveryReport, write_checkpoint};
@@ -55,7 +55,13 @@ impl TridentEngine {
         };
         let layout = DiskLayout::create(&config.data_dir)?;
         let manifest_store = ManifestStore::new(layout.manifest_path());
-        let manifest = manifest_store.load_or_create()?;
+        let mut manifest = manifest_store.load_or_create()?;
+        if manifest.column_families.is_empty() {
+            manifest
+                .column_families
+                .push(ColumnFamilyDescriptor::default());
+            manifest_store.save(&manifest)?;
+        }
         let mut segment_index: BTreeMap<(ColumnFamily, Key), Vec<crate::types::VersionedValue>> =
             BTreeMap::new();
         for segment in &manifest.segments {
@@ -132,6 +138,7 @@ impl TridentEngine {
         if batch.is_empty() {
             return Ok(self.snapshot().sequence);
         }
+        self.validate_batch_column_families(&batch)?;
         let sequence = self.inner.snapshots.next_sequence();
         let record = WalRecord {
             sequence,
@@ -185,6 +192,7 @@ impl TridentEngine {
         key: &[u8],
         snapshot: ReadSnapshot,
     ) -> Result<Option<Value>> {
+        self.ensure_column_family(cf)?;
         self.inner.metrics.reads.fetch_add(1, Ordering::Relaxed);
         if let Some(value) = self.inner.memtable.lock().get(cf, key, snapshot.sequence) {
             return Ok(match value {
@@ -239,6 +247,66 @@ impl TridentEngine {
             }
             Some(StoredValue::Delete) | None => None,
         })
+    }
+
+    pub fn create_column_family(&self, descriptor: ColumnFamilyDescriptor) -> Result<()> {
+        if descriptor.name == ColumnFamily::default().0 {
+            return Ok(());
+        }
+        let mut manifest = self.inner.manifest.lock();
+        if manifest
+            .column_families
+            .iter()
+            .any(|existing| existing.name == descriptor.name)
+        {
+            return Err(TridentError::ColumnFamilyExists(descriptor.name));
+        }
+        manifest.column_families.push(descriptor);
+        self.inner.manifest_store.save(&manifest)
+    }
+
+    pub fn drop_column_family(&self, name: &str) -> Result<()> {
+        if name == ColumnFamily::default().0 {
+            return Err(TridentError::CannotDropDefaultColumnFamily);
+        }
+        let mut manifest = self.inner.manifest.lock();
+        let original_len = manifest.column_families.len();
+        manifest
+            .column_families
+            .retain(|family| family.name != name);
+        if manifest.column_families.len() == original_len {
+            return Err(TridentError::UnknownColumnFamily(name.to_string()));
+        }
+        self.inner.manifest_store.save(&manifest)
+    }
+
+    pub fn list_column_families(&self) -> Vec<ColumnFamilyDescriptor> {
+        self.inner.manifest.lock().column_families.clone()
+    }
+
+    fn validate_batch_column_families(&self, batch: &WriteBatch) -> Result<()> {
+        for op in batch.ops() {
+            let cf = match op {
+                BatchOp::Put { cf, .. } | BatchOp::Delete { cf, .. } => cf,
+            };
+            self.ensure_column_family(cf)?;
+        }
+        Ok(())
+    }
+
+    fn ensure_column_family(&self, cf: &ColumnFamily) -> Result<()> {
+        if self
+            .inner
+            .manifest
+            .lock()
+            .column_families
+            .iter()
+            .any(|family| family.name == cf.0)
+        {
+            Ok(())
+        } else {
+            Err(TridentError::UnknownColumnFamily(cf.0.clone()))
+        }
     }
 
     pub fn get_ref(&self, key: impl AsRef<[u8]>) -> Result<Option<ValueRef<'static>>> {

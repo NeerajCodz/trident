@@ -1,5 +1,6 @@
+use crate::manifest::ColumnFamilyDescriptor;
 use crate::server::{RestServerConfig, serve_rest};
-use crate::{Result, TridentConfig, TridentEngine};
+use crate::{ColumnFamily, Result, TridentConfig, TridentEngine};
 use bytes::Bytes;
 use clap::{Parser, Subcommand};
 use std::net::SocketAddr;
@@ -18,13 +19,19 @@ pub struct Cli {
 #[derive(Subcommand)]
 enum Command {
     Put {
+        #[arg(long, default_value = "default")]
+        cf: String,
         key: String,
         value: String,
     },
     Get {
+        #[arg(long, default_value = "default")]
+        cf: String,
         key: String,
     },
     Delete {
+        #[arg(long, default_value = "default")]
+        cf: String,
         key: String,
     },
     Scan {
@@ -45,6 +52,10 @@ enum Command {
     },
     Checkpoint,
     Gc,
+    CreateCf {
+        name: String,
+    },
+    ListCf,
     Serve {
         #[arg(long, default_value = "127.0.0.1:7070")]
         bind: SocketAddr,
@@ -56,16 +67,22 @@ pub fn run() -> Result<()> {
     let data_dir = cli.data_dir.clone();
     let engine = TridentEngine::open(TridentConfig::new(&data_dir))?;
     match cli.command {
-        Command::Put { key, value } => {
-            let sequence = engine.put(Bytes::from(key), Bytes::from(value))?;
+        Command::Put { cf, key, value } => {
+            let mut batch = crate::WriteBatch::new();
+            batch.put(ColumnFamily(cf), Bytes::from(key), Bytes::from(value));
+            let sequence = engine.write_batch(batch)?;
             println!("{sequence}");
         }
-        Command::Get { key } => match engine.get(key.as_bytes())? {
-            Some(value) => println!("{}", String::from_utf8_lossy(&value)),
-            None => println!(),
-        },
-        Command::Delete { key } => {
-            let sequence = engine.delete(Bytes::from(key))?;
+        Command::Get { cf, key } => {
+            match engine.get_cf(&ColumnFamily(cf), key.as_bytes(), engine.snapshot())? {
+                Some(value) => println!("{}", String::from_utf8_lossy(&value)),
+                None => println!(),
+            }
+        }
+        Command::Delete { cf, key } => {
+            let mut batch = crate::WriteBatch::new();
+            batch.delete(ColumnFamily(cf), Bytes::from(key));
+            let sequence = engine.write_batch(batch)?;
             println!("{sequence}");
         }
         Command::Scan { start, end, limit } => {
@@ -97,6 +114,18 @@ pub fn run() -> Result<()> {
             println!(
                 "{}",
                 serde_json::to_string_pretty(&engine.garbage_collect()?)?
+            );
+        }
+        Command::CreateCf { name } => {
+            engine.create_column_family(ColumnFamilyDescriptor {
+                name,
+                ..ColumnFamilyDescriptor::default()
+            })?;
+        }
+        Command::ListCf => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&engine.list_column_families())?
             );
         }
         Command::Serve { bind } => {

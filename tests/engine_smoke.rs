@@ -248,6 +248,41 @@ fn l0_pressure_triggers_compaction_before_accepting_more_writes() {
 }
 
 #[test]
+fn pinned_snapshot_survives_compaction_until_released() {
+    let dir = tempdir().unwrap();
+    let engine = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    engine.put(Bytes::from("mvcc"), Bytes::from("v1")).unwrap();
+    engine.flush().unwrap();
+    let pinned = engine.pin_snapshot();
+    engine.put(Bytes::from("mvcc"), Bytes::from("v2")).unwrap();
+    engine.flush().unwrap();
+
+    engine.compact().unwrap();
+    assert_eq!(engine.get("mvcc").unwrap().unwrap(), Bytes::from("v2"));
+    assert_eq!(
+        engine
+            .get_cf(&ColumnFamily::default(), b"mvcc", pinned.snapshot())
+            .unwrap()
+            .unwrap(),
+        Bytes::from("v1")
+    );
+    assert_eq!(
+        engine.stats()["snapshots"]["pinned_count"]
+            .as_u64()
+            .unwrap(),
+        1
+    );
+
+    drop(pinned);
+    assert_eq!(
+        engine.stats()["snapshots"]["pinned_count"]
+            .as_u64()
+            .unwrap(),
+        0
+    );
+}
+
+#[test]
 fn segment_bloom_filter_rejects_absent_disk_key() {
     let dir = tempdir().unwrap();
     let engine = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();

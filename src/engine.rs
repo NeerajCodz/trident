@@ -5,13 +5,15 @@ use crate::disk::DiskLayout;
 use crate::errors::{Result, TridentError};
 use crate::manifest::{CheckpointMetadata, ColumnFamilyDescriptor, Manifest, ManifestStore};
 use crate::metrics::EngineMetrics;
-use crate::ram::{MemTable, SnapshotManager};
+use crate::ram::{MemTable, PinnedSnapshot, SnapshotManager};
 use crate::recovery::{GcReport, RecoveryReport, write_checkpoint};
 use crate::segments::bloom::bloom_key;
 use crate::segments::{SegmentReader, SegmentWriteOptions, SegmentWriter};
 use crate::transactions::OptimisticTransaction;
 use crate::transactions::{BatchOp, WriteBatch};
-use crate::types::{ColumnFamily, Key, ReadSnapshot, SequenceNumber, StoredValue, Value, ValueRef};
+use crate::types::{
+    ColumnFamily, Key, ReadSnapshot, SequenceNumber, StoredValue, Value, ValueRef, VersionedValue,
+};
 use crate::values::ValueLog;
 use crate::wal::{Wal, WalRecord};
 use bytes::Bytes;
@@ -34,7 +36,7 @@ struct EngineInner {
     memtable: Mutex<MemTable>,
     segment_index: Mutex<BTreeMap<(ColumnFamily, Key), Vec<crate::types::VersionedValue>>>,
     cache: Mutex<BlockCache<(u64, Vec<u8>)>>,
-    snapshots: SnapshotManager,
+    snapshots: Arc<SnapshotManager>,
     metrics: EngineMetrics,
     accelerator: Arc<dyn Accelerator>,
 }
@@ -78,7 +80,7 @@ impl TridentEngine {
         let wal_path = layout.wal_path(1);
         let wal_records = Wal::replay(&wal_path)?;
         let mut memtable = MemTable::default();
-        let snapshots = SnapshotManager::default();
+        let snapshots = Arc::new(SnapshotManager::default());
         for record in &wal_records {
             for op in record.batch.ops() {
                 memtable.apply(record.sequence, op);
@@ -467,6 +469,10 @@ impl TridentEngine {
         self.inner.snapshots.snapshot()
     }
 
+    pub fn pin_snapshot(&self) -> PinnedSnapshot {
+        self.inner.snapshots.pin()
+    }
+
     pub fn flush(&self) -> Result<Option<u64>> {
         let entries = self.inner.memtable.lock().drain_latest();
         if entries.is_empty() {
@@ -526,21 +532,17 @@ impl TridentEngine {
 
     pub fn compact(&self) -> Result<u64> {
         self.flush()?;
-        let snapshot = self.snapshot().sequence;
+        let latest_sequence = self.snapshot().sequence;
+        let oldest_pinned = self.inner.snapshots.oldest_pinned_sequence();
         let mut compacted = Vec::new();
         for ((cf, key), versions) in self.inner.segment_index.lock().iter() {
-            if let Some(version) = versions
-                .iter()
-                .rev()
-                .find(|version| version.sequence <= snapshot)
-                && !matches!(version.value, StoredValue::Delete)
-            {
-                compacted.push(crate::segments::block::SegmentEntry {
-                    cf: cf.clone(),
-                    key: key.clone(),
-                    version: version.clone(),
-                });
-            }
+            compacted.extend(self.compaction_retained_versions(
+                cf,
+                key,
+                versions,
+                latest_sequence,
+                oldest_pinned,
+            ));
         }
         if compacted.is_empty() {
             let mut manifest = self.inner.manifest.lock();
@@ -589,6 +591,53 @@ impl TridentEngine {
             self.inner.manifest_store.save(&manifest)?;
         }
         Ok(1)
+    }
+
+    fn compaction_retained_versions(
+        &self,
+        cf: &ColumnFamily,
+        key: &Key,
+        versions: &[VersionedValue],
+        latest_sequence: SequenceNumber,
+        oldest_pinned: Option<SequenceNumber>,
+    ) -> Vec<crate::segments::block::SegmentEntry> {
+        let mut retained = Vec::new();
+        let Some(newest) = versions
+            .iter()
+            .rev()
+            .find(|version| version.sequence <= latest_sequence)
+        else {
+            return retained;
+        };
+        if !matches!(newest.value, StoredValue::Delete) || oldest_pinned.is_some() {
+            retained.push(crate::segments::block::SegmentEntry {
+                cf: cf.clone(),
+                key: key.clone(),
+                version: newest.clone(),
+            });
+        }
+
+        let Some(oldest_pinned) = oldest_pinned else {
+            return retained;
+        };
+        let Some(pinned_visible) = versions
+            .iter()
+            .rev()
+            .find(|version| version.sequence <= oldest_pinned)
+        else {
+            return retained;
+        };
+        if pinned_visible.sequence != newest.sequence
+            && !matches!(pinned_visible.value, StoredValue::Delete)
+        {
+            retained.push(crate::segments::block::SegmentEntry {
+                cf: cf.clone(),
+                key: key.clone(),
+                version: pinned_visible.clone(),
+            });
+        }
+        retained.sort_by_key(|entry| entry.version.sequence);
+        retained
     }
 
     pub fn checkpoint(&self) -> Result<CheckpointMetadata> {
@@ -698,6 +747,10 @@ impl TridentEngine {
             "accelerator": self.inner.accelerator.name(),
             "metrics": self.inner.metrics.snapshot(),
             "manifest": &*self.inner.manifest.lock(),
+            "snapshots": {
+                "pinned_count": self.inner.snapshots.pinned_count(),
+                "oldest_pinned_sequence": self.inner.snapshots.oldest_pinned_sequence(),
+            },
             "data_dir": self.inner.layout.root(),
         })
     }

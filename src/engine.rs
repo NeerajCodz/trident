@@ -332,7 +332,69 @@ impl TridentEngine {
 
     pub fn compact(&self) -> Result<u64> {
         self.flush()?;
-        Ok(self.inner.manifest.lock().segments.len() as u64)
+        let snapshot = self.snapshot().sequence;
+        let mut compacted = Vec::new();
+        for ((cf, key), versions) in self.inner.segment_index.lock().iter() {
+            if let Some(version) = versions
+                .iter()
+                .rev()
+                .find(|version| version.sequence <= snapshot)
+                && !matches!(version.value, StoredValue::Delete)
+            {
+                compacted.push(crate::segments::block::SegmentEntry {
+                    cf: cf.clone(),
+                    key: key.clone(),
+                    version: version.clone(),
+                });
+            }
+        }
+        if compacted.is_empty() {
+            let mut manifest = self.inner.manifest.lock();
+            manifest.segments.clear();
+            self.inner.manifest_store.save(&manifest)?;
+            self.inner.segment_index.lock().clear();
+            return Ok(0);
+        }
+        let segment_id = {
+            let mut manifest = self.inner.manifest.lock();
+            let id = manifest.next_segment_id;
+            manifest.next_segment_id += 1;
+            id
+        };
+        let path = self.inner.layout.segment_path(1, segment_id);
+        std::fs::create_dir_all(path.parent().expect("segment path has parent"))?;
+        let mut value_log = ValueLog::open(self.inner.layout.value_log_path(segment_id))?;
+        let metadata = SegmentWriter::write(
+            SegmentWriteOptions {
+                path: &path,
+                id: segment_id,
+                level: 1,
+                compression: self.inner.config.compression,
+                accelerator: self.inner.accelerator.as_ref(),
+                value_log: &mut value_log,
+                large_value_threshold: self.inner.config.large_value_threshold,
+            },
+            compacted,
+        )?;
+        let loaded = SegmentReader::read(&path, self.inner.accelerator.as_ref())?;
+        let mut rebuilt = BTreeMap::new();
+        for entry in loaded {
+            rebuilt
+                .entry((entry.cf, entry.key))
+                .or_insert_with(Vec::new)
+                .push(entry.version);
+        }
+        {
+            let mut segment_index = self.inner.segment_index.lock();
+            *segment_index = rebuilt;
+        }
+        {
+            let mut manifest = self.inner.manifest.lock();
+            manifest.segments.clear();
+            manifest.segments.push(metadata);
+            self.inner.manifest_store.save(&manifest)?;
+        }
+        Ok(1)
     }
 
     pub fn recover(&self) -> RecoveryReport {

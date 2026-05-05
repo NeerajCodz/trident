@@ -5,6 +5,7 @@ use crate::types::ColumnFamily;
 use std::path::PathBuf;
 
 const WAL_MAGIC: u32 = 0x5457_414c;
+pub const WAL_RECORD_HEADER_LEN: usize = 12;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WalRecord {
@@ -41,6 +42,10 @@ impl WalRecord {
         out.into_inner()
     }
 
+    pub fn encoded_len(&self) -> usize {
+        self.encode().len()
+    }
+
     pub fn decode(bytes: &[u8], source: impl Into<PathBuf>) -> Result<Self> {
         let source = source.into();
         let mut reader = BinaryReader::new(bytes, source.clone());
@@ -53,13 +58,13 @@ impl WalRecord {
         }
         let len = reader.read_u32()? as usize;
         let expected = reader.read_u32()?;
-        if bytes.len() < 12 + len {
+        if bytes.len() < WAL_RECORD_HEADER_LEN + len {
             return Err(TridentError::Corrupt {
                 path: source,
                 reason: "torn WAL record".to_string(),
             });
         }
-        let payload = &bytes[12..12 + len];
+        let payload = &bytes[WAL_RECORD_HEADER_LEN..WAL_RECORD_HEADER_LEN + len];
         if crc32c(payload) != expected {
             return Err(TridentError::Corrupt {
                 path: source,

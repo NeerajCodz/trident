@@ -132,6 +132,37 @@ fn torn_wal_suffix_is_ignored_during_recovery() {
 }
 
 #[test]
+fn wal_rotates_by_configured_segment_size_and_replays_all_segments() {
+    let dir = tempdir().unwrap();
+    let mut config = TridentConfig::new(dir.path());
+    config.page_size = 4096;
+    config.wal_segment_size = 4096;
+    let engine = TridentEngine::open(config.clone()).unwrap();
+    for i in 0..4 {
+        engine
+            .put(
+                Bytes::from(format!("wal-rotate/{i}")),
+                Bytes::from(vec![b'w'; 1800]),
+            )
+            .unwrap();
+    }
+    let active_wal = engine.stats()["active_wal"]["id"].as_u64().unwrap();
+    assert!(active_wal > 1, "expected WAL rotation");
+    drop(engine);
+
+    let reopened = TridentEngine::open(config).unwrap();
+    for i in 0..4 {
+        assert_eq!(
+            reopened
+                .get(format!("wal-rotate/{i}").as_bytes())
+                .unwrap()
+                .unwrap(),
+            Bytes::from(vec![b'w'; 1800])
+        );
+    }
+}
+
+#[test]
 fn deterministic_operation_stream_matches_btree_oracle() {
     let dir = tempdir().unwrap();
     let engine = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();

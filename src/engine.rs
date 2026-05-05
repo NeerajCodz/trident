@@ -82,8 +82,7 @@ impl TridentEngine {
                     .push(entry.version);
             }
         }
-        let wal_path = layout.wal_path(1);
-        let wal_records = Wal::replay(&wal_path)?;
+        let wal_records = Wal::replay_dir(&layout.wal_root())?;
         let mut memtable = MemTable::default();
         let snapshots = Arc::new(SnapshotManager::default());
         for record in &wal_records {
@@ -93,7 +92,11 @@ impl TridentEngine {
             snapshots.observe(record.sequence);
         }
         snapshots.observe(manifest.last_sequence);
-        let wal = Wal::open(wal_path, config.wal_sync_policy)?;
+        let wal = Wal::open(
+            layout.wal_path(manifest.active_wal_id),
+            manifest.active_wal_id,
+            config.wal_sync_policy,
+        )?;
         let metrics = EngineMetrics::default();
         metrics
             .recovered_records
@@ -174,6 +177,7 @@ impl TridentEngine {
             sequence,
             batch: batch.clone(),
         };
+        self.rotate_wal_if_needed(record.encoded_len())?;
         self.inner.wal.lock().append(&record)?;
         {
             let mut memtable = self.inner.memtable.lock();
@@ -210,6 +214,36 @@ impl TridentEngine {
                 .fetch_add(1, Ordering::Relaxed);
         }
         Ok(sequence)
+    }
+
+    fn rotate_wal_if_needed(&self, next_record_len: usize) -> Result<()> {
+        let should_rotate = self
+            .inner
+            .wal
+            .lock()
+            .should_rotate(next_record_len, self.inner.config.wal_segment_size);
+        if !should_rotate {
+            return Ok(());
+        }
+        self.install_new_active_wal()
+    }
+
+    fn install_new_active_wal(&self) -> Result<()> {
+        let new_wal_id = {
+            let mut manifest = self.inner.manifest.lock();
+            let id = manifest.next_wal_id;
+            manifest.active_wal_id = id;
+            manifest.next_wal_id += 1;
+            self.inner.manifest_store.save(&manifest)?;
+            id
+        };
+        let new_wal = Wal::open(
+            self.inner.layout.wal_path(new_wal_id),
+            new_wal_id,
+            self.inner.config.wal_sync_policy,
+        )?;
+        *self.inner.wal.lock() = new_wal;
+        Ok(())
     }
 
     fn relieve_l0_pressure_before_write(&self) -> Result<()> {
@@ -541,7 +575,7 @@ impl TridentEngine {
             .metrics
             .memtable_bytes
             .store(0, Ordering::Relaxed);
-        self.inner.wal.lock().truncate()?;
+        self.install_new_active_wal()?;
         self.inner
             .metrics
             .segment_flushes
@@ -686,6 +720,7 @@ impl TridentEngine {
             live_files.insert(PathBuf::from(&segment.path));
             live_files.insert(self.inner.layout.value_log_path(segment.id));
         }
+        live_files.insert(self.inner.layout.wal_path(manifest.active_wal_id));
         if let Some(checkpoint) = &manifest.latest_checkpoint {
             live_files.insert(PathBuf::from(&checkpoint.path));
         }
@@ -700,6 +735,12 @@ impl TridentEngine {
         self.collect_stale_files(
             &self.inner.layout.value_root(),
             "tval",
+            &live_files,
+            &mut report,
+        )?;
+        self.collect_stale_files(
+            &self.inner.layout.wal_root(),
+            "wal",
             &live_files,
             &mut report,
         )?;
@@ -814,11 +855,20 @@ impl TridentEngine {
             "effective_config": self.effective_config(),
             "metrics": self.inner.metrics.snapshot(),
             "manifest": &*self.inner.manifest.lock(),
+            "active_wal": self.active_wal_stats(),
             "snapshots": {
                 "pinned_count": self.inner.snapshots.pinned_count(),
                 "oldest_pinned_sequence": self.inner.snapshots.oldest_pinned_sequence(),
             },
             "data_dir": self.inner.layout.root(),
+        })
+    }
+
+    fn active_wal_stats(&self) -> serde_json::Value {
+        let wal = self.inner.wal.lock();
+        serde_json::json!({
+            "id": wal.segment_id(),
+            "path": wal.path().to_string_lossy(),
         })
     }
 }

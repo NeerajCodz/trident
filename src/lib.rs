@@ -19,7 +19,10 @@ pub mod values;
 pub mod wal;
 
 pub use async_engine::AsyncTridentEngine;
-pub use config::{AcceleratorBackend, ChecksumMode, Compression, TridentConfig, WalSyncPolicy};
+pub use config::{
+    AcceleratorBackend, ChecksumMode, Compression, PersistedEngineConfig, TridentConfig,
+    WalSyncPolicy,
+};
 pub use engine::TridentEngine;
 pub use errors::{Result, TridentError};
 pub use ram::PinnedSnapshot;

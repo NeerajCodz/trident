@@ -14,6 +14,8 @@ pub enum TridentError {
     Corrupt { path: PathBuf, reason: String },
     #[error("invalid config: {0}")]
     InvalidConfig(String),
+    #[error("stored engine config does not match requested config: {0}")]
+    ConfigMismatch(String),
     #[error("key not found")]
     KeyNotFound,
     #[error("compare-and-swap failed")]
@@ -32,6 +34,8 @@ pub enum TridentError {
     UnsupportedAccelerator(String),
     #[error("server error: {0}")]
     Server(String),
+    #[error("background task failed: {0}")]
+    TaskJoin(String),
 }
 
 pub type Result<T> = std::result::Result<T, TridentError>;

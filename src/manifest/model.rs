@@ -1,8 +1,14 @@
+use crate::config::{
+    DEFAULT_LARGE_VALUE_THRESHOLD, DEFAULT_MEMTABLE_FLUSH_THRESHOLD_BYTES, PersistedEngineConfig,
+    TridentConfig,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Manifest {
     pub format_version: u32,
+    #[serde(default)]
+    pub effective_config: PersistedEngineConfig,
     pub last_sequence: u64,
     pub next_segment_id: u64,
     pub latest_checkpoint: Option<CheckpointMetadata>,
@@ -11,9 +17,10 @@ pub struct Manifest {
 }
 
 impl Manifest {
-    pub fn fresh() -> Self {
+    pub fn fresh(config: &TridentConfig) -> Self {
         Self {
             format_version: 1,
+            effective_config: config.persisted(),
             last_sequence: 0,
             next_segment_id: 1,
             latest_checkpoint: None,
@@ -56,8 +63,8 @@ impl Default for ColumnFamilyDescriptor {
     fn default() -> Self {
         Self {
             name: "default".to_string(),
-            write_buffer_size_bytes: 64 * 1024 * 1024,
-            large_value_threshold_bytes: 64 * 1024,
+            write_buffer_size_bytes: DEFAULT_MEMTABLE_FLUSH_THRESHOLD_BYTES,
+            large_value_threshold_bytes: DEFAULT_LARGE_VALUE_THRESHOLD,
             bloom_enabled: true,
         }
     }

@@ -1,6 +1,6 @@
 use crate::config::TridentConfig;
 use crate::engine::TridentEngine;
-use crate::errors::Result;
+use crate::errors::{Result, TridentError};
 use crate::transactions::WriteBatch;
 use crate::types::{Key, ReadSnapshot, SequenceNumber, Value};
 
@@ -13,7 +13,7 @@ impl AsyncTridentEngine {
     pub async fn open(config: TridentConfig) -> Result<Self> {
         let inner = tokio::task::spawn_blocking(move || TridentEngine::open(config))
             .await
-            .expect("trident open task panicked")?;
+            .map_err(|error| TridentError::TaskJoin(error.to_string()))??;
         Ok(Self { inner })
     }
 
@@ -21,28 +21,28 @@ impl AsyncTridentEngine {
         let engine = self.inner.clone();
         tokio::task::spawn_blocking(move || engine.put(key, value))
             .await
-            .expect("trident put task panicked")
+            .map_err(|error| TridentError::TaskJoin(error.to_string()))?
     }
 
     pub async fn get(&self, key: Key) -> Result<Option<Value>> {
         let engine = self.inner.clone();
         tokio::task::spawn_blocking(move || engine.get(key))
             .await
-            .expect("trident get task panicked")
+            .map_err(|error| TridentError::TaskJoin(error.to_string()))?
     }
 
     pub async fn write_batch(&self, batch: WriteBatch) -> Result<SequenceNumber> {
         let engine = self.inner.clone();
         tokio::task::spawn_blocking(move || engine.write_batch(batch))
             .await
-            .expect("trident write task panicked")
+            .map_err(|error| TridentError::TaskJoin(error.to_string()))?
     }
 
     pub async fn flush(&self) -> Result<Option<u64>> {
         let engine = self.inner.clone();
         tokio::task::spawn_blocking(move || engine.flush())
             .await
-            .expect("trident flush task panicked")
+            .map_err(|error| TridentError::TaskJoin(error.to_string()))?
     }
 
     pub fn snapshot(&self) -> ReadSnapshot {

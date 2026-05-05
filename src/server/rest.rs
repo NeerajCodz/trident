@@ -40,6 +40,7 @@ pub async fn serve_rest(config: RestServerConfig) -> Result<()> {
         .route("/v1/admin/checkpoint", post(checkpoint))
         .route("/v1/admin/gc", post(gc))
         .route("/v1/admin/stats", get(stats))
+        .route("/v1/admin/verify", get(verify))
         .route("/v1/admin/column-families", get(list_column_families))
         .route(
             "/v1/admin/column-families/{name}",
@@ -165,6 +166,13 @@ async fn stats(State(state): State<RestState>) -> Response {
     Json(state.engine.stats()).into_response()
 }
 
+async fn verify(State(state): State<RestState>) -> Response {
+    match state.engine.verify() {
+        Ok(report) => Json(report).into_response(),
+        Err(error) => server_error(error),
+    }
+}
+
 async fn list_column_families(State(state): State<RestState>) -> Response {
     Json(state.engine.list_column_families()).into_response()
 }
@@ -195,6 +203,9 @@ fn server_error(error: crate::TridentError) -> Response {
         TridentError::ColumnFamilyExists(_) => StatusCode::CONFLICT,
         TridentError::CannotDropDefaultColumnFamily => StatusCode::BAD_REQUEST,
         TridentError::WriteStalled { .. } => StatusCode::TOO_MANY_REQUESTS,
+        TridentError::Corrupt { .. } | TridentError::ConfigMismatch(_) => {
+            StatusCode::UNPROCESSABLE_ENTITY
+        }
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     };
     (

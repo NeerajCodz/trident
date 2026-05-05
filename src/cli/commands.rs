@@ -45,6 +45,7 @@ enum Command {
     Flush,
     Compact,
     Recover,
+    Verify,
     Inspect,
     Bench {
         #[arg(long, default_value_t = 10_000)]
@@ -106,6 +107,9 @@ pub fn run() -> Result<()> {
         }
         Command::Recover => {
             println!("{}", serde_json::to_string_pretty(&engine.recover())?);
+        }
+        Command::Verify => {
+            println!("{}", serde_json::to_string_pretty(&engine.verify()?)?);
         }
         Command::Checkpoint => {
             println!("{}", serde_json::to_string_pretty(&engine.checkpoint()?)?);

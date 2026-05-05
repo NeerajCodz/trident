@@ -1,6 +1,9 @@
 use bytes::Bytes;
+use std::collections::BTreeMap;
+use std::fs::OpenOptions;
+use std::io::Write;
 use tempfile::tempdir;
-use trident::{TridentConfig, TridentEngine, WriteBatch};
+use trident::{TridentConfig, TridentEngine, TridentError, WriteBatch};
 
 #[test]
 fn put_get_delete_and_recover_from_wal() {
@@ -90,4 +93,69 @@ fn compaction_collapses_overwrites_and_tombstones() {
 
     let stats = engine.stats();
     assert_eq!(stats["manifest"]["segments"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn compare_and_swap_enforces_expected_value() {
+    let dir = tempdir().unwrap();
+    let engine = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    engine.put(Bytes::from("cas"), Bytes::from("v1")).unwrap();
+    let err = engine
+        .compare_and_swap(Bytes::from("cas"), Some(b"wrong"), Bytes::from("v2"))
+        .unwrap_err();
+    assert!(matches!(err, TridentError::CompareAndSwapFailed));
+    engine
+        .compare_and_swap(Bytes::from("cas"), Some(b"v1"), Bytes::from("v2"))
+        .unwrap();
+    assert_eq!(engine.get("cas").unwrap().unwrap(), Bytes::from("v2"));
+}
+
+#[test]
+fn torn_wal_suffix_is_ignored_during_recovery() {
+    let dir = tempdir().unwrap();
+    let engine = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    engine
+        .put(Bytes::from("safe"), Bytes::from("value"))
+        .unwrap();
+    drop(engine);
+
+    let wal_path = dir.path().join("wal").join("00000000000000000001.wal");
+    let mut wal = OpenOptions::new().append(true).open(wal_path).unwrap();
+    wal.write_all(&[0x4c, 0x41, 0x57]).unwrap();
+    wal.flush().unwrap();
+
+    let reopened = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    assert_eq!(reopened.get("safe").unwrap().unwrap(), Bytes::from("value"));
+}
+
+#[test]
+fn deterministic_operation_stream_matches_btree_oracle() {
+    let dir = tempdir().unwrap();
+    let engine = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    let mut oracle = BTreeMap::new();
+
+    for i in 0..500_u32 {
+        let key = format!("key/{:03}", (i * 37) % 91);
+        if i % 7 == 0 {
+            engine.delete(Bytes::from(key.clone())).unwrap();
+            oracle.remove(&key);
+        } else {
+            let value = format!("value/{i:04}");
+            engine
+                .put(Bytes::from(key.clone()), Bytes::from(value.clone()))
+                .unwrap();
+            oracle.insert(key, value);
+        }
+        if i % 53 == 0 {
+            engine.flush().unwrap();
+        }
+    }
+
+    engine.compact().unwrap();
+    for (key, value) in oracle {
+        assert_eq!(
+            engine.get(key.as_bytes()).unwrap().unwrap(),
+            Bytes::from(value)
+        );
+    }
 }

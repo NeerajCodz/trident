@@ -3,7 +3,7 @@ use crate::config::Compression;
 use crate::errors::{Result, TridentError};
 use crate::io::{BinaryReader, crc32c};
 use crate::segments::block::SegmentEntry;
-use crate::types::{ColumnFamily, StoredValue, VersionedValue};
+use crate::types::{ColumnFamily, StoredValue, ValuePointer, VersionedValue};
 use bytes::Bytes;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -55,6 +55,19 @@ impl SegmentReader {
             let value = match payload_reader.read_u8()? {
                 1 => StoredValue::Put(payload_reader.read_len_bytes()?),
                 2 => StoredValue::Delete,
+                3 => {
+                    let path =
+                        String::from_utf8_lossy(&payload_reader.read_len_bytes()?).to_string();
+                    let offset = payload_reader.read_u64()?;
+                    let len = payload_reader.read_u64()?;
+                    let checksum = payload_reader.read_u32()?;
+                    StoredValue::BlobPointer(ValuePointer {
+                        path,
+                        offset,
+                        len,
+                        checksum,
+                    })
+                }
                 tag => {
                     return Err(TridentError::Corrupt {
                         path: PathBuf::from("segment-payload"),

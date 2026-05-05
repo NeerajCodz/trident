@@ -14,6 +14,7 @@ pub mod recovery;
 pub mod segments;
 pub mod transactions;
 pub mod types;
+pub mod values;
 pub mod wal;
 
 pub use async_engine::AsyncTridentEngine;

@@ -53,7 +53,16 @@ impl<'a> ValueRef<'a> {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum StoredValue {
     Put(Vec<u8>),
+    BlobPointer(ValuePointer),
     Delete,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ValuePointer {
+    pub path: String,
+    pub offset: u64,
+    pub len: u64,
+    pub checksum: u32,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

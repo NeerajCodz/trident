@@ -3,7 +3,10 @@ use std::collections::BTreeMap;
 use std::fs::OpenOptions;
 use std::io::Write;
 use tempfile::tempdir;
-use trident::{AsyncTridentEngine, TridentConfig, TridentEngine, TridentError, WriteBatch};
+use trident::manifest::ColumnFamilyDescriptor;
+use trident::{
+    AsyncTridentEngine, ColumnFamily, TridentConfig, TridentEngine, TridentError, WriteBatch,
+};
 
 #[test]
 fn put_get_delete_and_recover_from_wal() {
@@ -230,5 +233,40 @@ fn segment_bloom_filter_rejects_absent_disk_key() {
     assert!(
         stats["metrics"]["bloom_negative_hits"].as_u64().unwrap() > 0,
         "expected bloom filter to reject absent key"
+    );
+}
+
+#[test]
+fn column_families_are_explicit_keyspaces() {
+    let dir = tempdir().unwrap();
+    let engine = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    let mut batch = WriteBatch::new();
+    batch.put("missing", Bytes::from("k"), Bytes::from("v"));
+    assert!(matches!(
+        engine.write_batch(batch).unwrap_err(),
+        TridentError::UnknownColumnFamily(_)
+    ));
+
+    engine
+        .create_column_family(ColumnFamilyDescriptor {
+            name: "pages".to_string(),
+            ..ColumnFamilyDescriptor::default()
+        })
+        .unwrap();
+    let mut batch = WriteBatch::new();
+    batch.put("pages", Bytes::from("k"), Bytes::from("v"));
+    engine.write_batch(batch).unwrap();
+    assert_eq!(
+        engine
+            .get_cf(&ColumnFamily("pages".to_string()), b"k", engine.snapshot())
+            .unwrap()
+            .unwrap(),
+        Bytes::from("v")
+    );
+    assert!(
+        engine
+            .list_column_families()
+            .iter()
+            .any(|cf| cf.name == "pages")
     );
 }

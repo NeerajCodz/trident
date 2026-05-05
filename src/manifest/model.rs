@@ -6,6 +6,7 @@ pub struct Manifest {
     pub last_sequence: u64,
     pub next_segment_id: u64,
     pub latest_checkpoint: Option<CheckpointMetadata>,
+    pub column_families: Vec<ColumnFamilyDescriptor>,
     pub segments: Vec<SegmentMetadata>,
 }
 
@@ -16,6 +17,7 @@ impl Manifest {
             last_sequence: 0,
             next_segment_id: 1,
             latest_checkpoint: None,
+            column_families: vec![ColumnFamilyDescriptor::default()],
             segments: Vec::new(),
         }
     }
@@ -40,4 +42,23 @@ pub struct CheckpointMetadata {
     pub sequence: u64,
     pub segment_count: u64,
     pub file_digest: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ColumnFamilyDescriptor {
+    pub name: String,
+    pub write_buffer_size_bytes: usize,
+    pub large_value_threshold_bytes: usize,
+    pub bloom_enabled: bool,
+}
+
+impl Default for ColumnFamilyDescriptor {
+    fn default() -> Self {
+        Self {
+            name: "default".to_string(),
+            write_buffer_size_bytes: 64 * 1024 * 1024,
+            large_value_threshold_bytes: 64 * 1024,
+            bloom_enabled: true,
+        }
+    }
 }

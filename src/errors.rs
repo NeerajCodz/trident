@@ -18,6 +18,12 @@ pub enum TridentError {
     KeyNotFound,
     #[error("compare-and-swap failed")]
     CompareAndSwapFailed,
+    #[error("unknown column family: {0}")]
+    UnknownColumnFamily(String),
+    #[error("column family already exists: {0}")]
+    ColumnFamilyExists(String),
+    #[error("cannot drop the default column family")]
+    CannotDropDefaultColumnFamily,
     #[error("unsupported accelerator backend: {0}")]
     UnsupportedAccelerator(String),
     #[error("server error: {0}")]

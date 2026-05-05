@@ -15,6 +15,7 @@ pub struct TridentConfig {
     pub direct_io: bool,
     pub accelerator: AcceleratorBackend,
     pub large_value_threshold: usize,
+    pub memtable_flush_threshold_bytes: usize,
 }
 
 impl TridentConfig {
@@ -64,6 +65,7 @@ impl Default for TridentConfig {
             direct_io: false,
             accelerator: AcceleratorBackend::Cpu,
             large_value_threshold: 64 * 1024,
+            memtable_flush_threshold_bytes: 64 * 1024 * 1024,
         }
     }
 }

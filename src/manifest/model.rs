@@ -100,6 +100,7 @@ pub struct ColumnFamilyOptions {
     pub compaction_strategy: CompactionStrategy,
     pub compression_override: Option<Compression>,
     pub ttl_seconds: Option<u64>,
+    pub prefix_extractor_len: Option<usize>,
     pub cache_partition_percent: Option<u8>,
     pub merge_operator: Option<String>,
 }
@@ -111,6 +112,7 @@ impl Default for ColumnFamilyOptions {
             compaction_strategy: CompactionStrategy::Leveled,
             compression_override: None,
             ttl_seconds: None,
+            prefix_extractor_len: None,
             cache_partition_percent: None,
             merge_operator: None,
         }

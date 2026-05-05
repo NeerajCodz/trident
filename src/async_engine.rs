@@ -3,6 +3,7 @@ use crate::engine::TridentEngine;
 use crate::errors::{Result, TridentError};
 use crate::transactions::WriteBatch;
 use crate::types::{Key, ReadSnapshot, SequenceNumber, Value};
+use std::path::PathBuf;
 
 #[derive(Clone)]
 pub struct AsyncTridentEngine {
@@ -41,6 +42,34 @@ impl AsyncTridentEngine {
     pub async fn flush(&self) -> Result<Option<u64>> {
         let engine = self.inner.clone();
         tokio::task::spawn_blocking(move || engine.flush())
+            .await
+            .map_err(|error| TridentError::TaskJoin(error.to_string()))?
+    }
+
+    pub async fn compact(&self) -> Result<u64> {
+        let engine = self.inner.clone();
+        tokio::task::spawn_blocking(move || engine.compact())
+            .await
+            .map_err(|error| TridentError::TaskJoin(error.to_string()))?
+    }
+
+    pub async fn checkpoint(&self) -> Result<crate::manifest::CheckpointMetadata> {
+        let engine = self.inner.clone();
+        tokio::task::spawn_blocking(move || engine.checkpoint())
+            .await
+            .map_err(|error| TridentError::TaskJoin(error.to_string()))?
+    }
+
+    pub async fn backup_to(&self, path: PathBuf) -> Result<()> {
+        let engine = self.inner.clone();
+        tokio::task::spawn_blocking(move || engine.backup_to(path))
+            .await
+            .map_err(|error| TridentError::TaskJoin(error.to_string()))?
+    }
+
+    pub async fn scan_prefix(&self, prefix: Key, limit: usize) -> Result<Vec<(Key, Value)>> {
+        let engine = self.inner.clone();
+        tokio::task::spawn_blocking(move || engine.scan_prefix(&prefix, limit))
             .await
             .map_err(|error| TridentError::TaskJoin(error.to_string()))?
     }

@@ -42,6 +42,11 @@ enum Command {
         #[arg(long, default_value_t = 100)]
         limit: usize,
     },
+    ScanPrefix {
+        prefix: String,
+        #[arg(long, default_value_t = 100)]
+        limit: usize,
+    },
     Flush,
     Compact,
     Recover,
@@ -57,6 +62,13 @@ enum Command {
         name: String,
     },
     ListCf,
+    Backup {
+        path: PathBuf,
+    },
+    Restore {
+        backup_path: PathBuf,
+        target_path: PathBuf,
+    },
     Serve {
         #[arg(long, default_value = "127.0.0.1:7070")]
         bind: SocketAddr,
@@ -99,6 +111,15 @@ pub fn run() -> Result<()> {
                 );
             }
         }
+        Command::ScanPrefix { prefix, limit } => {
+            for (key, value) in engine.scan_prefix(prefix.as_bytes(), limit)? {
+                println!(
+                    "{}={}",
+                    String::from_utf8_lossy(&key),
+                    String::from_utf8_lossy(&value)
+                );
+            }
+        }
         Command::Flush => {
             println!("{:?}", engine.flush()?);
         }
@@ -131,6 +152,15 @@ pub fn run() -> Result<()> {
                 "{}",
                 serde_json::to_string_pretty(&engine.list_column_families())?
             );
+        }
+        Command::Backup { path } => {
+            engine.backup_to(path)?;
+        }
+        Command::Restore {
+            backup_path,
+            target_path,
+        } => {
+            TridentEngine::restore_from_backup(backup_path, target_path)?;
         }
         Command::Serve { bind } => {
             let config = TridentConfig::new(data_dir);

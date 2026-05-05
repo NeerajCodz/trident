@@ -215,3 +215,20 @@ fn memtable_flush_threshold_bounds_ram_growth() {
         "expected automatic flushes once threshold is crossed"
     );
 }
+
+#[test]
+fn segment_bloom_filter_rejects_absent_disk_key() {
+    let dir = tempdir().unwrap();
+    let engine = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    engine
+        .put(Bytes::from("present"), Bytes::from("value"))
+        .unwrap();
+    engine.flush().unwrap();
+
+    assert_eq!(engine.get("absent").unwrap(), None);
+    let stats = engine.stats();
+    assert!(
+        stats["metrics"]["bloom_negative_hits"].as_u64().unwrap() > 0,
+        "expected bloom filter to reject absent key"
+    );
+}

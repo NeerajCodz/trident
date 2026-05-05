@@ -4,6 +4,7 @@ use crate::errors::Result;
 use crate::io::{BinaryWriter, file_digest};
 use crate::manifest::SegmentMetadata;
 use crate::segments::block::SegmentEntry;
+use crate::segments::bloom::{BloomFilter, bloom_key};
 use crate::types::StoredValue;
 use crate::values::ValueLog;
 use std::fs;
@@ -32,8 +33,10 @@ impl SegmentWriter {
             (&left.cf.0, left.key.as_ref()).cmp(&(&right.cf.0, right.key.as_ref()))
         });
         let mut payload = BinaryWriter::new();
+        let mut bloom_filter = BloomFilter::with_expected_items(entries.len());
         payload.write_u32(entries.len() as u32);
         for entry in &entries {
+            bloom_filter.insert(&bloom_key(&entry.cf.0, &entry.key));
             payload.write_len_bytes(entry.cf.0.as_bytes());
             payload.write_len_bytes(&entry.key);
             payload.write_u64(entry.version.sequence);
@@ -92,6 +95,7 @@ impl SegmentWriter {
             min_key,
             max_key,
             entries: entries.len() as u64,
+            bloom_filter,
             file_digest: digest.to_hex().to_string(),
         })
     }

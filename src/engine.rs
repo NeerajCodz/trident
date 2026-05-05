@@ -7,6 +7,7 @@ use crate::manifest::{CheckpointMetadata, Manifest, ManifestStore};
 use crate::metrics::EngineMetrics;
 use crate::ram::{MemTable, SnapshotManager};
 use crate::recovery::{GcReport, RecoveryReport, write_checkpoint};
+use crate::segments::bloom::bloom_key;
 use crate::segments::{SegmentReader, SegmentWriteOptions, SegmentWriter};
 use crate::transactions::{BatchOp, WriteBatch};
 use crate::types::{ColumnFamily, Key, ReadSnapshot, SequenceNumber, StoredValue, Value, ValueRef};
@@ -206,6 +207,13 @@ impl TridentEngine {
             .metrics
             .cache_misses
             .fetch_add(1, Ordering::Relaxed);
+        if !self.segment_filters_may_contain(cf, key) {
+            self.inner
+                .metrics
+                .bloom_negative_hits
+                .fetch_add(1, Ordering::Relaxed);
+            return Ok(None);
+        }
         let value = self
             .inner
             .segment_index
@@ -235,6 +243,18 @@ impl TridentEngine {
 
     pub fn get_ref(&self, key: impl AsRef<[u8]>) -> Result<Option<ValueRef<'static>>> {
         Ok(self.get(key)?.map(ValueRef::Owned))
+    }
+
+    fn segment_filters_may_contain(&self, cf: &ColumnFamily, key: &[u8]) -> bool {
+        let encoded = bloom_key(&cf.0, key);
+        self.inner.manifest.lock().segments.iter().any(|segment| {
+            if !segment.min_key.is_empty()
+                && (key < segment.min_key.as_slice() || key > segment.max_key.as_slice())
+            {
+                return false;
+            }
+            segment.bloom_filter.may_contain(&encoded)
+        })
     }
 
     pub fn scan(

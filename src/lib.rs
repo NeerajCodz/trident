@@ -13,6 +13,7 @@ pub mod ram;
 pub mod recovery;
 pub mod segments;
 pub mod server;
+pub mod slog;
 pub mod transactions;
 pub mod types;
 pub mod values;
@@ -20,8 +21,8 @@ pub mod wal;
 
 pub use async_engine::AsyncTridentEngine;
 pub use config::{
-    AcceleratorBackend, ChecksumMode, Compression, PersistedEngineConfig, TridentConfig,
-    WalSyncPolicy,
+    AcceleratorBackend, ChecksumMode, CompactionStrategy, Compression, LoggingOptions,
+    MemTableKind, PersistedEngineConfig, TridentConfig, WalSyncPolicy,
 };
 pub use engine::TridentEngine;
 pub use errors::{Result, TridentError};

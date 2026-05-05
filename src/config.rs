@@ -13,8 +13,10 @@ pub const DEFAULT_MEMTABLE_FLUSH_THRESHOLD_BYTES: usize = 64 * 1024 * 1024;
 pub const DEFAULT_IMMUTABLE_MEMTABLE_LIMIT: usize = 4;
 pub const DEFAULT_L0_SLOWDOWN_SEGMENTS: usize = 8;
 pub const DEFAULT_L0_STOP_SEGMENTS: usize = 12;
+pub const DEFAULT_SERVICE_NAME: &str = "trident";
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct TridentConfig {
     pub data_dir: PathBuf,
     pub page_size: usize,
@@ -33,9 +35,13 @@ pub struct TridentConfig {
     pub immutable_memtable_limit: usize,
     pub l0_slowdown_segments: usize,
     pub l0_stop_segments: usize,
+    pub default_memtable_kind: MemTableKind,
+    pub default_compaction_strategy: CompactionStrategy,
+    pub logging: LoggingOptions,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct PersistedEngineConfig {
     pub page_size: usize,
     pub block_size: usize,
@@ -53,6 +59,9 @@ pub struct PersistedEngineConfig {
     pub immutable_memtable_limit: usize,
     pub l0_slowdown_segments: usize,
     pub l0_stop_segments: usize,
+    pub default_memtable_kind: MemTableKind,
+    pub default_compaction_strategy: CompactionStrategy,
+    pub logging: LoggingOptions,
 }
 
 impl Default for PersistedEngineConfig {
@@ -136,6 +145,16 @@ impl TridentConfig {
                     .to_string(),
             ));
         }
+        if self.logging.service.trim().is_empty() {
+            return Err(TridentError::InvalidConfig(
+                "logging.service must not be empty".to_string(),
+            ));
+        }
+        if self.logging.schema_version.trim().is_empty() {
+            return Err(TridentError::InvalidConfig(
+                "logging.schema_version must not be empty".to_string(),
+            ));
+        }
         Ok(())
     }
 
@@ -157,6 +176,9 @@ impl TridentConfig {
             immutable_memtable_limit: self.immutable_memtable_limit,
             l0_slowdown_segments: self.l0_slowdown_segments,
             l0_stop_segments: self.l0_stop_segments,
+            default_memtable_kind: self.default_memtable_kind,
+            default_compaction_strategy: self.default_compaction_strategy,
+            logging: self.logging.clone(),
         }
     }
 
@@ -189,8 +211,24 @@ impl Default for TridentConfig {
             immutable_memtable_limit: DEFAULT_IMMUTABLE_MEMTABLE_LIMIT,
             l0_slowdown_segments: DEFAULT_L0_SLOWDOWN_SEGMENTS,
             l0_stop_segments: DEFAULT_L0_STOP_SEGMENTS,
+            default_memtable_kind: MemTableKind::SkipList,
+            default_compaction_strategy: CompactionStrategy::Leveled,
+            logging: LoggingOptions::default(),
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum MemTableKind {
+    SkipList,
+    Art,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum CompactionStrategy {
+    Leveled,
+    Tiered,
+    Universal,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -219,4 +257,25 @@ pub enum AcceleratorBackend {
     Cuda,
     Vulkan,
     Metal,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct LoggingOptions {
+    pub schema_version: String,
+    pub service: String,
+    pub commit: String,
+    pub region: String,
+    pub node: String,
+}
+
+impl Default for LoggingOptions {
+    fn default() -> Self {
+        Self {
+            schema_version: "1".to_string(),
+            service: DEFAULT_SERVICE_NAME.to_string(),
+            commit: std::env::var("TRIDENT_COMMIT").unwrap_or_else(|_| "unknown".to_string()),
+            region: std::env::var("TRIDENT_REGION").unwrap_or_else(|_| "unknown".to_string()),
+            node: std::env::var("TRIDENT_NODE").unwrap_or_else(|_| "unknown".to_string()),
+        }
+    }
 }

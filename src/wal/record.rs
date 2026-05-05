@@ -26,6 +26,24 @@ impl WalRecord {
                     payload.write_len_bytes(key);
                     payload.write_len_bytes(value);
                 }
+                BatchOp::PutWithExpiry {
+                    cf,
+                    key,
+                    value,
+                    expires_at_ms,
+                } => {
+                    payload.write_u8(3);
+                    payload.write_len_bytes(cf.0.as_bytes());
+                    payload.write_len_bytes(key);
+                    payload.write_len_bytes(value);
+                    payload.write_u64(*expires_at_ms);
+                }
+                BatchOp::Merge { cf, key, value } => {
+                    payload.write_u8(4);
+                    payload.write_len_bytes(cf.0.as_bytes());
+                    payload.write_len_bytes(key);
+                    payload.write_len_bytes(value);
+                }
                 BatchOp::Delete { cf, key } => {
                     payload.write_u8(2);
                     payload.write_len_bytes(cf.0.as_bytes());
@@ -88,6 +106,20 @@ impl WalRecord {
                 }
                 2 => {
                     batch.delete(cf, bytes::Bytes::from(key));
+                }
+                3 => {
+                    let value = payload_reader.read_len_bytes()?;
+                    let expires_at_ms = payload_reader.read_u64()?;
+                    batch.put_with_expiry(
+                        cf,
+                        bytes::Bytes::from(key),
+                        bytes::Bytes::from(value),
+                        expires_at_ms,
+                    );
+                }
+                4 => {
+                    let value = payload_reader.read_len_bytes()?;
+                    batch.merge(cf, bytes::Bytes::from(key), bytes::Bytes::from(value));
                 }
                 _ => {
                     return Err(TridentError::Corrupt {

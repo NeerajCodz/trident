@@ -5,12 +5,13 @@ use crate::io::{BinaryWriter, file_digest};
 use crate::manifest::SegmentMetadata;
 use crate::segments::block::SegmentEntry;
 use crate::segments::bloom::{BloomFilter, bloom_key};
+use crate::segments::format::{
+    BlockIndexEntry, SEGMENT_FOOTER_MAGIC, SEGMENT_MAGIC, SEGMENT_VERSION,
+};
 use crate::types::StoredValue;
 use crate::values::ValueLog;
 use std::fs;
 use std::path::Path;
-
-const SEGMENT_MAGIC: u32 = 0x5453_4547;
 
 pub struct SegmentWriter;
 
@@ -22,62 +23,64 @@ pub struct SegmentWriteOptions<'a> {
     pub accelerator: &'a dyn Accelerator,
     pub value_log: &'a mut ValueLog,
     pub large_value_threshold: usize,
+    pub block_size: usize,
 }
 
 impl SegmentWriter {
     pub fn write(
-        options: SegmentWriteOptions<'_>,
+        mut options: SegmentWriteOptions<'_>,
         mut entries: Vec<SegmentEntry>,
     ) -> Result<SegmentMetadata> {
         entries.sort_by(|left, right| {
             (&left.cf.0, left.key.as_ref()).cmp(&(&right.cf.0, right.key.as_ref()))
         });
-        let mut payload = BinaryWriter::new();
         let mut bloom_filter = BloomFilter::with_expected_items(entries.len());
-        payload.write_u32(entries.len() as u32);
-        for entry in &entries {
-            bloom_filter.insert(&bloom_key(&entry.cf.0, &entry.key));
-            payload.write_len_bytes(entry.cf.0.as_bytes());
-            payload.write_len_bytes(&entry.key);
-            payload.write_u64(entry.version.sequence);
-            match &entry.version.value {
-                StoredValue::Put(value) => {
-                    if value.len() > options.large_value_threshold {
-                        let pointer = options.value_log.append(value)?;
-                        payload.write_u8(3);
-                        payload.write_len_bytes(pointer.path.as_bytes());
-                        payload.write_u64(pointer.offset);
-                        payload.write_u64(pointer.len);
-                        payload.write_u32(pointer.checksum);
-                    } else {
-                        payload.write_u8(1);
-                        payload.write_len_bytes(value);
-                    }
-                }
-                StoredValue::BlobPointer(pointer) => {
-                    payload.write_u8(3);
-                    payload.write_len_bytes(pointer.path.as_bytes());
-                    payload.write_u64(pointer.offset);
-                    payload.write_u64(pointer.len);
-                    payload.write_u32(pointer.checksum);
-                }
-                StoredValue::Delete => {
-                    payload.write_u8(2);
-                }
-            }
-        }
-        let compressed = options
-            .accelerator
-            .encode_block(options.compression, &payload.into_inner())?;
         let mut out = BinaryWriter::new();
         out.write_u32(SEGMENT_MAGIC);
+        out.write_u32(SEGMENT_VERSION);
         out.write_u8(match options.compression {
             Compression::None => 0,
             Compression::Lz4 => 1,
             Compression::Zstd => 2,
         });
-        out.write_u32(options.accelerator.crc32c(&compressed));
-        out.write_len_bytes(&compressed);
+        out.write_u32(options.level);
+        out.write_u64(options.id);
+
+        let mut index = Vec::new();
+        let mut block_entries = Vec::new();
+        let mut block_bytes = 0usize;
+        for entry in &entries {
+            let estimated = entry.cf.0.len() + entry.key.len() + 32 + encoded_value_len(entry);
+            if !block_entries.is_empty() && block_bytes + estimated > options.block_size {
+                write_block(
+                    &mut options,
+                    &mut out,
+                    &block_entries,
+                    &mut bloom_filter,
+                    &mut index,
+                )?;
+                block_entries.clear();
+                block_bytes = 0;
+            }
+            block_bytes += estimated;
+            block_entries.push(entry.clone());
+        }
+        if !block_entries.is_empty() {
+            write_block(
+                &mut options,
+                &mut out,
+                &block_entries,
+                &mut bloom_filter,
+                &mut index,
+            )?;
+        }
+
+        let footer = encode_footer(&index);
+        let footer_checksum = options.accelerator.crc32c(&footer);
+        out.write_bytes(&footer);
+        out.write_u32(footer.len() as u32);
+        out.write_u32(footer_checksum);
+        out.write_u32(SEGMENT_FOOTER_MAGIC);
         fs::write(options.path, out.into_inner())?;
         let digest = file_digest(options.path)?;
         let min_key = entries
@@ -98,5 +101,116 @@ impl SegmentWriter {
             bloom_filter,
             file_digest: digest.to_hex().to_string(),
         })
+    }
+}
+
+fn write_block(
+    options: &mut SegmentWriteOptions<'_>,
+    out: &mut BinaryWriter,
+    entries: &[SegmentEntry],
+    bloom_filter: &mut BloomFilter,
+    index: &mut Vec<BlockIndexEntry>,
+) -> Result<()> {
+    let offset = out.len() as u64;
+    let payload = encode_block_entries(options, entries, bloom_filter)?;
+    let compressed = options
+        .accelerator
+        .encode_block(options.compression, &payload)?;
+    out.write_u32(compressed.len() as u32);
+    out.write_u32(payload.len() as u32);
+    out.write_u32(options.accelerator.crc32c(&compressed));
+    out.write_bytes(&compressed);
+    let len = out.len() as u64 - offset;
+    index.push(BlockIndexEntry {
+        first_key: entries.first().expect("block has entries").key.to_vec(),
+        last_key: entries.last().expect("block has entries").key.to_vec(),
+        offset,
+        len,
+    });
+    Ok(())
+}
+
+fn encode_block_entries(
+    options: &mut SegmentWriteOptions<'_>,
+    entries: &[SegmentEntry],
+    bloom_filter: &mut BloomFilter,
+) -> Result<Vec<u8>> {
+    let mut payload = BinaryWriter::new();
+    payload.write_u32(entries.len() as u32);
+    for entry in entries {
+        bloom_filter.insert(&bloom_key(&entry.cf.0, &entry.key));
+        payload.write_len_bytes(entry.cf.0.as_bytes());
+        payload.write_len_bytes(&entry.key);
+        payload.write_u64(entry.version.sequence);
+        match &entry.version.value {
+            StoredValue::Put(value) => {
+                if value.len() > options.large_value_threshold {
+                    let pointer = options.value_log.append(value)?;
+                    payload.write_u8(3);
+                    payload.write_len_bytes(pointer.path.as_bytes());
+                    payload.write_u64(pointer.offset);
+                    payload.write_u64(pointer.len);
+                    payload.write_u32(pointer.checksum);
+                } else {
+                    payload.write_u8(1);
+                    payload.write_len_bytes(value);
+                }
+            }
+            StoredValue::PutWithExpiry {
+                value,
+                expires_at_ms,
+            } => {
+                if value.len() > options.large_value_threshold {
+                    let pointer = options.value_log.append(value)?;
+                    payload.write_u8(4);
+                    payload.write_u64(*expires_at_ms);
+                    payload.write_len_bytes(pointer.path.as_bytes());
+                    payload.write_u64(pointer.offset);
+                    payload.write_u64(pointer.len);
+                    payload.write_u32(pointer.checksum);
+                } else {
+                    payload.write_u8(5);
+                    payload.write_u64(*expires_at_ms);
+                    payload.write_len_bytes(value);
+                }
+            }
+            StoredValue::Merge(value) => {
+                payload.write_u8(6);
+                payload.write_len_bytes(value);
+            }
+            StoredValue::BlobPointer(pointer) => {
+                payload.write_u8(3);
+                payload.write_len_bytes(pointer.path.as_bytes());
+                payload.write_u64(pointer.offset);
+                payload.write_u64(pointer.len);
+                payload.write_u32(pointer.checksum);
+            }
+            StoredValue::Delete => {
+                payload.write_u8(2);
+            }
+        }
+    }
+    Ok(payload.into_inner())
+}
+
+fn encode_footer(index: &[BlockIndexEntry]) -> Vec<u8> {
+    let mut footer = BinaryWriter::new();
+    footer.write_u32(index.len() as u32);
+    for entry in index {
+        footer.write_len_bytes(&entry.first_key);
+        footer.write_len_bytes(&entry.last_key);
+        footer.write_u64(entry.offset);
+        footer.write_u64(entry.len);
+    }
+    footer.into_inner()
+}
+
+fn encoded_value_len(entry: &SegmentEntry) -> usize {
+    match &entry.version.value {
+        StoredValue::Put(value) => value.len(),
+        StoredValue::PutWithExpiry { value, .. } => value.len() + 8,
+        StoredValue::Merge(value) => value.len(),
+        StoredValue::BlobPointer(pointer) => pointer.path.len() + 24,
+        StoredValue::Delete => 1,
     }
 }

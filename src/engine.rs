@@ -1,6 +1,6 @@
 use crate::accel::{Accelerator, CpuAccelerator};
 use crate::cache::BlockCache;
-use crate::config::{AcceleratorBackend, TridentConfig};
+use crate::config::{AcceleratorBackend, PersistedEngineConfig, TridentConfig};
 use crate::disk::DiskLayout;
 use crate::errors::{Result, TridentError};
 use crate::manifest::{CheckpointMetadata, ColumnFamilyDescriptor, Manifest, ManifestStore};
@@ -58,7 +58,12 @@ impl TridentEngine {
         };
         let layout = DiskLayout::create(&config.data_dir)?;
         let manifest_store = ManifestStore::new(layout.manifest_path());
-        let mut manifest = manifest_store.load_or_create()?;
+        let mut manifest = manifest_store.load_or_create(&config)?;
+        if manifest.effective_config != config.persisted() {
+            return Err(TridentError::ConfigMismatch(
+                "open config differs from persisted effective engine config".to_string(),
+            ));
+        }
         if manifest.column_families.is_empty() {
             manifest
                 .column_families
@@ -108,6 +113,14 @@ impl TridentEngine {
                 accelerator,
             }),
         })
+    }
+
+    pub fn open_from_file(path: impl Into<PathBuf>) -> Result<Self> {
+        Self::open(TridentConfig::from_file(path)?)
+    }
+
+    pub fn effective_config(&self) -> PersistedEngineConfig {
+        self.inner.manifest.lock().effective_config.clone()
     }
 
     pub fn put(&self, key: impl Into<Key>, value: impl Into<Value>) -> Result<SequenceNumber> {
@@ -335,6 +348,12 @@ impl TridentEngine {
 
     pub fn list_column_families(&self) -> Vec<ColumnFamilyDescriptor> {
         self.inner.manifest.lock().column_families.clone()
+    }
+
+    pub fn column_family(&self, name: &str) -> Result<ColumnFamily> {
+        let cf = ColumnFamily(name.to_string());
+        self.ensure_column_family(&cf)?;
+        Ok(cf)
     }
 
     fn validate_batch_column_families(&self, batch: &WriteBatch) -> Result<()> {
@@ -700,6 +719,53 @@ impl TridentEngine {
         Ok(report)
     }
 
+    pub fn verify(&self) -> Result<crate::recovery::VerificationReport> {
+        let manifest = self.inner.manifest.lock().clone();
+        let mut report = crate::recovery::VerificationReport {
+            manifest_generation: manifest.next_segment_id,
+            segments_checked: 0,
+            checkpoints_checked: 0,
+            value_logs_checked: 0,
+            bytes_checked: 0,
+        };
+        for segment in &manifest.segments {
+            let path = PathBuf::from(&segment.path);
+            let metadata = std::fs::metadata(&path)?;
+            let digest = crate::io::file_digest(&path)?.to_hex().to_string();
+            if digest != segment.file_digest {
+                return Err(TridentError::Corrupt {
+                    path,
+                    reason: "segment digest mismatch".to_string(),
+                });
+            }
+            report.segments_checked += 1;
+            report.bytes_checked += metadata.len();
+            let value_log_path = self.inner.layout.value_log_path(segment.id);
+            if value_log_path.exists() {
+                report.value_logs_checked += 1;
+                report.bytes_checked += std::fs::metadata(value_log_path)?.len();
+            }
+        }
+        if let Some(checkpoint) = &manifest.latest_checkpoint {
+            let path = PathBuf::from(&checkpoint.path);
+            let metadata = std::fs::metadata(&path)?;
+            let digest = crate::io::file_digest(&path)?.to_hex().to_string();
+            if digest != checkpoint.file_digest {
+                return Err(TridentError::Corrupt {
+                    path,
+                    reason: "checkpoint digest mismatch".to_string(),
+                });
+            }
+            report.checkpoints_checked += 1;
+            report.bytes_checked += metadata.len();
+        }
+        Ok(report)
+    }
+
+    pub fn close(&self) -> Result<()> {
+        self.flush().map(|_| ())
+    }
+
     fn collect_stale_files(
         &self,
         root: &Path,
@@ -745,6 +811,7 @@ impl TridentEngine {
     pub fn stats(&self) -> serde_json::Value {
         serde_json::json!({
             "accelerator": self.inner.accelerator.name(),
+            "effective_config": self.effective_config(),
             "metrics": self.inner.metrics.snapshot(),
             "manifest": &*self.inner.manifest.lock(),
             "snapshots": {

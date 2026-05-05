@@ -1,6 +1,8 @@
+use crate::config::TridentConfig;
 use crate::errors::Result;
 use crate::manifest::model::Manifest;
-use std::fs;
+use std::fs::{self, File, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug)]
@@ -13,12 +15,12 @@ impl ManifestStore {
         Self { path: path.into() }
     }
 
-    pub fn load_or_create(&self) -> Result<Manifest> {
+    pub fn load_or_create(&self, config: &TridentConfig) -> Result<Manifest> {
         if self.path.exists() {
             let bytes = fs::read_to_string(&self.path)?;
             Ok(toml::from_str(&bytes)?)
         } else {
-            let manifest = Manifest::fresh();
+            let manifest = Manifest::fresh(config);
             self.save(&manifest)?;
             Ok(manifest)
         }
@@ -26,15 +28,34 @@ impl ManifestStore {
 
     pub fn save(&self, manifest: &Manifest) -> Result<()> {
         let tmp = self.path.with_extension("tmp");
-        fs::write(&tmp, toml::to_string_pretty(manifest)?)?;
-        if self.path.exists() {
-            fs::remove_file(&self.path)?;
+        {
+            let mut file = OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(&tmp)?;
+            file.write_all(toml::to_string_pretty(manifest)?.as_bytes())?;
+            file.sync_all()?;
         }
         fs::rename(tmp, &self.path)?;
+        sync_parent_dir(&self.path)?;
         Ok(())
     }
 
     pub fn path(&self) -> &Path {
         &self.path
     }
+}
+
+#[cfg(unix)]
+fn sync_parent_dir(path: &Path) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        File::open(parent)?.sync_all()?;
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn sync_parent_dir(_path: &Path) -> Result<()> {
+    Ok(())
 }

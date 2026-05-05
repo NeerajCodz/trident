@@ -2,7 +2,8 @@ use crate::errors::Result;
 use crate::io::file_digest;
 use crate::manifest::{CheckpointMetadata, Manifest};
 use serde::{Deserialize, Serialize};
-use std::fs;
+use std::fs::{self, File, OpenOptions};
+use std::io::Write;
 use std::path::Path;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -23,11 +24,17 @@ pub fn write_checkpoint(path: &Path, id: u64, manifest: &Manifest) -> Result<Che
             .collect(),
     };
     let tmp = path.with_extension("tmp");
-    fs::write(&tmp, serde_json::to_vec_pretty(&checkpoint)?)?;
-    if path.exists() {
-        fs::remove_file(path)?;
+    {
+        let mut file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&tmp)?;
+        file.write_all(&serde_json::to_vec_pretty(&checkpoint)?)?;
+        file.sync_all()?;
     }
     fs::rename(&tmp, path)?;
+    sync_parent_dir(path)?;
     let digest = file_digest(path)?;
     Ok(CheckpointMetadata {
         id,
@@ -36,4 +43,17 @@ pub fn write_checkpoint(path: &Path, id: u64, manifest: &Manifest) -> Result<Che
         segment_count: manifest.segments.len() as u64,
         file_digest: digest.to_hex().to_string(),
     })
+}
+
+#[cfg(unix)]
+fn sync_parent_dir(path: &Path) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        File::open(parent)?.sync_all()?;
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn sync_parent_dir(_path: &Path) -> Result<()> {
+    Ok(())
 }

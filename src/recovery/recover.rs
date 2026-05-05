@@ -6,3 +6,12 @@ pub struct RecoveryReport {
     pub last_sequence: u64,
     pub segment_count: u64,
 }
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct VerificationReport {
+    pub manifest_generation: u64,
+    pub segments_checked: u64,
+    pub checkpoints_checked: u64,
+    pub value_logs_checked: u64,
+    pub bytes_checked: u64,
+}

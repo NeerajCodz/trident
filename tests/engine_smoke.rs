@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use std::collections::BTreeMap;
-use std::fs::OpenOptions;
+use std::fs::{self, OpenOptions};
 use std::io::Write;
 use tempfile::tempdir;
 use trident::manifest::ColumnFamilyDescriptor;
@@ -202,13 +202,15 @@ async fn async_engine_wraps_sync_core() {
 fn memtable_flush_threshold_bounds_ram_growth() {
     let dir = tempdir().unwrap();
     let mut config = TridentConfig::new(dir.path());
-    config.memtable_flush_threshold_bytes = 128;
+    config.page_size = 4096;
+    config.block_size = 4096;
+    config.memtable_flush_threshold_bytes = 4096;
     let engine = TridentEngine::open(config).unwrap();
-    for i in 0..10 {
+    for i in 0..20 {
         engine
             .put(
                 Bytes::from(format!("bounded/{i}")),
-                Bytes::from(vec![b'x'; 64]),
+                Bytes::from(vec![b'x'; 512]),
             )
             .unwrap();
     }
@@ -360,4 +362,91 @@ fn optimistic_transaction_commits_when_keys_do_not_change() {
     let sequence = txn.commit().unwrap();
     assert_eq!(sequence, 1);
     assert_eq!(engine.get("txn-ok").unwrap().unwrap(), Bytes::from("v1"));
+}
+
+#[test]
+fn effective_config_is_persisted_and_verified_on_reopen() {
+    let dir = tempdir().unwrap();
+    let mut config = TridentConfig::new(dir.path());
+    config.page_size = 4096;
+    config.block_size = 4096;
+    config.wal_segment_size = 4096;
+    let engine = TridentEngine::open(config.clone()).unwrap();
+    assert_eq!(engine.effective_config(), config.persisted());
+    drop(engine);
+
+    let reopened = TridentEngine::open(config.clone()).unwrap();
+    assert_eq!(reopened.effective_config(), config.persisted());
+
+    let mut incompatible = config;
+    incompatible.block_size = 8192;
+    match TridentEngine::open(incompatible) {
+        Err(TridentError::ConfigMismatch(_)) => {}
+        Err(error) => panic!("unexpected error: {error}"),
+        Ok(_) => panic!("expected config mismatch"),
+    }
+}
+
+#[test]
+fn open_from_file_loads_validated_toml_config() {
+    let dir = tempdir().unwrap();
+    let data_dir = dir.path().join("data");
+    let config_path = dir.path().join("trident.toml");
+    fs::write(
+        &config_path,
+        format!(
+            r#"
+data_dir = "{}"
+page_size = 4096
+block_size = 4096
+segment_size = 4096
+wal_segment_size = 4096
+wal_sync_policy = "EveryBatch"
+cache_size_bytes = 4096
+compression = "Lz4"
+checksum = "Crc32c"
+background_workers = 1
+direct_io = false
+accelerator = "Cpu"
+large_value_threshold = 1024
+memtable_flush_threshold_bytes = 4096
+immutable_memtable_limit = 1
+l0_slowdown_segments = 2
+l0_stop_segments = 3
+"#,
+            data_dir.to_string_lossy().replace('\\', "\\\\")
+        ),
+    )
+    .unwrap();
+
+    let engine = TridentEngine::open_from_file(&config_path).unwrap();
+    engine.put(Bytes::from("cfg"), Bytes::from("ok")).unwrap();
+    assert_eq!(engine.get("cfg").unwrap().unwrap(), Bytes::from("ok"));
+}
+
+#[test]
+fn verify_checks_live_segment_digest() {
+    let dir = tempdir().unwrap();
+    let engine = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    engine
+        .put(Bytes::from("verify"), Bytes::from("ok"))
+        .unwrap();
+    engine.flush().unwrap();
+    let report = engine.verify().unwrap();
+    assert_eq!(report.segments_checked, 1);
+
+    let segment_path = engine.stats()["manifest"]["segments"][0]["path"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    OpenOptions::new()
+        .append(true)
+        .open(&segment_path)
+        .unwrap()
+        .write_all(b"corrupt")
+        .unwrap();
+    assert!(matches!(
+        engine.verify().unwrap_err(),
+        TridentError::Corrupt { .. }
+    ));
 }

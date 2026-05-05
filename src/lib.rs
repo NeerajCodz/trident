@@ -22,5 +22,6 @@ pub use async_engine::AsyncTridentEngine;
 pub use config::{AcceleratorBackend, ChecksumMode, Compression, TridentConfig, WalSyncPolicy};
 pub use engine::TridentEngine;
 pub use errors::{Result, TridentError};
+pub use ram::PinnedSnapshot;
 pub use transactions::{BatchOp, OptimisticTransaction, WriteBatch};
 pub use types::{ColumnFamily, Key, ReadSnapshot, SequenceNumber, TreeId, Value, ValueRef};

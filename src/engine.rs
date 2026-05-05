@@ -7,9 +7,10 @@ use crate::manifest::{Manifest, ManifestStore};
 use crate::metrics::EngineMetrics;
 use crate::ram::{MemTable, SnapshotManager};
 use crate::recovery::RecoveryReport;
-use crate::segments::{SegmentReader, SegmentWriter};
+use crate::segments::{SegmentReader, SegmentWriteOptions, SegmentWriter};
 use crate::transactions::{BatchOp, WriteBatch};
 use crate::types::{ColumnFamily, Key, ReadSnapshot, SequenceNumber, StoredValue, Value, ValueRef};
+use crate::values::ValueLog;
 use crate::wal::{Wal, WalRecord};
 use bytes::Bytes;
 use parking_lot::Mutex;
@@ -174,6 +175,9 @@ impl TridentEngine {
         if let Some(value) = self.inner.memtable.lock().get(cf, key, snapshot.sequence) {
             return Ok(match value {
                 StoredValue::Put(value) => Some(Bytes::from(value)),
+                StoredValue::BlobPointer(pointer) => {
+                    Some(Bytes::from(ValueLog::read_pointer(&pointer)?))
+                }
                 StoredValue::Delete => None,
             });
         }
@@ -204,6 +208,11 @@ impl TridentEngine {
         Ok(match value.map(|version| version.value) {
             Some(StoredValue::Put(value)) => {
                 let value = Bytes::from(value);
+                self.inner.cache.lock().insert(cache_key, value.clone());
+                Some(value)
+            }
+            Some(StoredValue::BlobPointer(pointer)) => {
+                let value = Bytes::from(ValueLog::read_pointer(&pointer)?);
                 self.inner.cache.lock().insert(cache_key, value.clone());
                 Some(value)
             }
@@ -249,9 +258,16 @@ impl TridentEngine {
                 .iter()
                 .rev()
                 .find(|version| version.sequence <= snapshot.sequence)
-                && let StoredValue::Put(value) = &version.value
             {
-                rows.insert(key.clone(), Bytes::from(value.clone()));
+                match &version.value {
+                    StoredValue::Put(value) => {
+                        rows.insert(key.clone(), Bytes::from(value.clone()));
+                    }
+                    StoredValue::BlobPointer(pointer) => {
+                        rows.insert(key.clone(), Bytes::from(ValueLog::read_pointer(pointer)?));
+                    }
+                    StoredValue::Delete => {}
+                }
             }
         }
         Ok(rows.into_iter().take(limit).collect())
@@ -273,16 +289,21 @@ impl TridentEngine {
             id
         };
         let path = self.inner.layout.segment_path(0, segment_id);
+        let mut value_log = ValueLog::open(self.inner.layout.value_log_path(segment_id))?;
         let segment_entries = entries
             .into_iter()
             .map(|(cf, key, version)| crate::segments::block::SegmentEntry { cf, key, version })
             .collect::<Vec<_>>();
         let metadata = SegmentWriter::write(
-            &path,
-            segment_id,
-            0,
-            self.inner.config.compression,
-            self.inner.accelerator.as_ref(),
+            SegmentWriteOptions {
+                path: &path,
+                id: segment_id,
+                level: 0,
+                compression: self.inner.config.compression,
+                accelerator: self.inner.accelerator.as_ref(),
+                value_log: &mut value_log,
+                large_value_threshold: self.inner.config.large_value_threshold,
+            },
             segment_entries,
         )?;
         let loaded = SegmentReader::read(&path, self.inner.accelerator.as_ref())?;
@@ -337,5 +358,23 @@ impl Clone for TridentEngine {
         Self {
             inner: self.inner.clone(),
         }
+    }
+}
+
+impl crate::disk::PoiesisStorageAdapter for TridentEngine {
+    fn put_page_value(&self, key: Key, value: Value) -> Result<SequenceNumber> {
+        self.put(key, value)
+    }
+
+    fn read_page_value(&self, key: &[u8], snapshot: ReadSnapshot) -> Result<Option<Value>> {
+        self.get_cf(&ColumnFamily::default(), key, snapshot)
+    }
+
+    fn write_kv_batch(&self, batch: WriteBatch) -> Result<SequenceNumber> {
+        self.write_batch(batch)
+    }
+
+    fn flush_durable(&self) -> Result<()> {
+        self.flush().map(|_| ())
     }
 }

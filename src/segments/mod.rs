@@ -3,4 +3,4 @@ pub mod reader;
 pub mod writer;
 
 pub use reader::SegmentReader;
-pub use writer::SegmentWriter;
+pub use writer::{SegmentWriteOptions, SegmentWriter};

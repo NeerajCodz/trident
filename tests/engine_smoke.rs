@@ -54,3 +54,18 @@ fn scan_returns_sorted_visible_values() {
         ]
     );
 }
+
+#[test]
+fn large_values_move_to_value_log_and_survive_restart() {
+    let dir = tempdir().unwrap();
+    let mut config = TridentConfig::new(dir.path());
+    config.large_value_threshold = 8;
+    let engine = TridentEngine::open(config.clone()).unwrap();
+    let value = Bytes::from(vec![42_u8; 4096]);
+    engine.put(Bytes::from("large"), value.clone()).unwrap();
+    engine.flush().unwrap();
+    drop(engine);
+
+    let reopened = TridentEngine::open(config).unwrap();
+    assert_eq!(reopened.get("large").unwrap().unwrap(), value);
+}

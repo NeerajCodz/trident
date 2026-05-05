@@ -5,6 +5,7 @@ use crate::io::{BinaryWriter, file_digest};
 use crate::manifest::SegmentMetadata;
 use crate::segments::block::SegmentEntry;
 use crate::types::StoredValue;
+use crate::values::ValueLog;
 use std::fs;
 use std::path::Path;
 
@@ -12,13 +13,19 @@ const SEGMENT_MAGIC: u32 = 0x5453_4547;
 
 pub struct SegmentWriter;
 
+pub struct SegmentWriteOptions<'a> {
+    pub path: &'a Path,
+    pub id: u64,
+    pub level: u32,
+    pub compression: Compression,
+    pub accelerator: &'a dyn Accelerator,
+    pub value_log: &'a mut ValueLog,
+    pub large_value_threshold: usize,
+}
+
 impl SegmentWriter {
     pub fn write(
-        path: &Path,
-        id: u64,
-        level: u32,
-        compression: Compression,
-        accelerator: &dyn Accelerator,
+        options: SegmentWriteOptions<'_>,
         mut entries: Vec<SegmentEntry>,
     ) -> Result<SegmentMetadata> {
         entries.sort_by(|left, right| {
@@ -32,26 +39,44 @@ impl SegmentWriter {
             payload.write_u64(entry.version.sequence);
             match &entry.version.value {
                 StoredValue::Put(value) => {
-                    payload.write_u8(1);
-                    payload.write_len_bytes(value);
+                    if value.len() > options.large_value_threshold {
+                        let pointer = options.value_log.append(value)?;
+                        payload.write_u8(3);
+                        payload.write_len_bytes(pointer.path.as_bytes());
+                        payload.write_u64(pointer.offset);
+                        payload.write_u64(pointer.len);
+                        payload.write_u32(pointer.checksum);
+                    } else {
+                        payload.write_u8(1);
+                        payload.write_len_bytes(value);
+                    }
+                }
+                StoredValue::BlobPointer(pointer) => {
+                    payload.write_u8(3);
+                    payload.write_len_bytes(pointer.path.as_bytes());
+                    payload.write_u64(pointer.offset);
+                    payload.write_u64(pointer.len);
+                    payload.write_u32(pointer.checksum);
                 }
                 StoredValue::Delete => {
                     payload.write_u8(2);
                 }
             }
         }
-        let compressed = accelerator.encode_block(compression, &payload.into_inner())?;
+        let compressed = options
+            .accelerator
+            .encode_block(options.compression, &payload.into_inner())?;
         let mut out = BinaryWriter::new();
         out.write_u32(SEGMENT_MAGIC);
-        out.write_u8(match compression {
+        out.write_u8(match options.compression {
             Compression::None => 0,
             Compression::Lz4 => 1,
             Compression::Zstd => 2,
         });
-        out.write_u32(accelerator.crc32c(&compressed));
+        out.write_u32(options.accelerator.crc32c(&compressed));
         out.write_len_bytes(&compressed);
-        fs::write(path, out.into_inner())?;
-        let digest = file_digest(path)?;
+        fs::write(options.path, out.into_inner())?;
+        let digest = file_digest(options.path)?;
         let min_key = entries
             .first()
             .map(|entry| entry.key.to_vec())
@@ -61,9 +86,9 @@ impl SegmentWriter {
             .map(|entry| entry.key.to_vec())
             .unwrap_or_default();
         Ok(SegmentMetadata {
-            id,
-            level,
-            path: path.to_string_lossy().to_string(),
+            id: options.id,
+            level: options.level,
+            path: options.path.to_string_lossy().to_string(),
             min_key,
             max_key,
             entries: entries.len() as u64,

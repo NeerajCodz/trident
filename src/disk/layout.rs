@@ -42,6 +42,10 @@ impl DiskLayout {
             .join(format!("{id:020}.tseg"))
     }
 
+    pub fn value_log_path(&self, id: u64) -> PathBuf {
+        self.root.join("values").join(format!("{id:020}.tval"))
+    }
+
     pub fn tmp_path(&self, name: &str) -> PathBuf {
         self.root.join("tmp").join(name)
     }

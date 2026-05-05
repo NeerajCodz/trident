@@ -1,3 +1,4 @@
+use crate::manifest::ColumnFamilyDescriptor;
 use crate::{Result, TridentConfig, TridentEngine, TridentError};
 use axum::body::Bytes as BodyBytes;
 use axum::extract::{Path, State};
@@ -35,6 +36,11 @@ pub async fn serve_rest(config: RestServerConfig) -> Result<()> {
         .route("/v1/admin/checkpoint", post(checkpoint))
         .route("/v1/admin/gc", post(gc))
         .route("/v1/admin/stats", get(stats))
+        .route("/v1/admin/column-families", get(list_column_families))
+        .route(
+            "/v1/admin/column-families/{name}",
+            post(create_column_family).delete(drop_column_family),
+        )
         .with_state(state);
     let listener = tokio::net::TcpListener::bind(config.bind)
         .await
@@ -112,9 +118,40 @@ async fn stats(State(state): State<RestState>) -> Response {
     Json(state.engine.stats()).into_response()
 }
 
+async fn list_column_families(State(state): State<RestState>) -> Response {
+    Json(state.engine.list_column_families()).into_response()
+}
+
+async fn create_column_family(
+    State(state): State<RestState>,
+    Path(name): Path<String>,
+) -> Response {
+    match state.engine.create_column_family(ColumnFamilyDescriptor {
+        name,
+        ..ColumnFamilyDescriptor::default()
+    }) {
+        Ok(()) => StatusCode::CREATED.into_response(),
+        Err(error) => server_error(error),
+    }
+}
+
+async fn drop_column_family(State(state): State<RestState>, Path(name): Path<String>) -> Response {
+    match state.engine.drop_column_family(&name) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(error) => server_error(error),
+    }
+}
+
 fn server_error(error: crate::TridentError) -> Response {
+    let status = match &error {
+        TridentError::UnknownColumnFamily(_) => StatusCode::NOT_FOUND,
+        TridentError::ColumnFamilyExists(_) => StatusCode::CONFLICT,
+        TridentError::CannotDropDefaultColumnFamily => StatusCode::BAD_REQUEST,
+        TridentError::WriteStalled { .. } => StatusCode::TOO_MANY_REQUESTS,
+        _ => StatusCode::INTERNAL_SERVER_ERROR,
+    };
     (
-        StatusCode::INTERNAL_SERVER_ERROR,
+        status,
         Json(serde_json::json!({ "error": error.to_string() })),
     )
         .into_response()

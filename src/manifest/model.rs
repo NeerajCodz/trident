@@ -16,6 +16,8 @@ pub struct Manifest {
     pub last_sequence: u64,
     pub next_segment_id: u64,
     pub latest_checkpoint: Option<CheckpointMetadata>,
+    #[serde(default)]
+    pub compaction_jobs: Vec<CompactionJobState>,
     pub column_families: Vec<ColumnFamilyDescriptor>,
     pub segments: Vec<SegmentMetadata>,
 }
@@ -30,6 +32,7 @@ impl Manifest {
             last_sequence: 0,
             next_segment_id: 1,
             latest_checkpoint: None,
+            compaction_jobs: Vec::new(),
             column_families: vec![ColumnFamilyDescriptor {
                 options: ColumnFamilyOptions {
                     memtable_kind: config.default_memtable_kind,
@@ -41,6 +44,25 @@ impl Manifest {
             segments: Vec::new(),
         }
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CompactionJobState {
+    pub id: u64,
+    pub strategy: CompactionStrategy,
+    pub status: CompactionJobStatus,
+    pub source_segment_ids: Vec<u64>,
+    pub output_segment_id: Option<u64>,
+    pub created_at_ms: u64,
+    pub updated_at_ms: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum CompactionJobStatus {
+    Planned,
+    Running,
+    Installed,
+    Aborted,
 }
 
 fn default_active_wal_id() -> u64 {
@@ -60,6 +82,8 @@ pub struct SegmentMetadata {
     pub max_key: Vec<u8>,
     pub entries: u64,
     pub bloom_filter: crate::segments::BloomFilter,
+    #[serde(default)]
+    pub partitioned_bloom_filter: Option<crate::segments::PartitionedBloomFilter>,
     pub file_digest: String,
 }
 

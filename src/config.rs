@@ -14,6 +14,8 @@ pub const DEFAULT_IMMUTABLE_MEMTABLE_LIMIT: usize = 4;
 pub const DEFAULT_L0_SLOWDOWN_SEGMENTS: usize = 8;
 pub const DEFAULT_L0_STOP_SEGMENTS: usize = 12;
 pub const DEFAULT_SERVICE_NAME: &str = "trident";
+pub const DEFAULT_FLUSH_RATE_LIMIT_BYTES_PER_SEC: usize = 128 * 1024 * 1024;
+pub const DEFAULT_COMPACTION_RATE_LIMIT_BYTES_PER_SEC: usize = 64 * 1024 * 1024;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -37,6 +39,8 @@ pub struct TridentConfig {
     pub l0_stop_segments: usize,
     pub default_memtable_kind: MemTableKind,
     pub default_compaction_strategy: CompactionStrategy,
+    pub flush_rate_limit_bytes_per_sec: usize,
+    pub compaction_rate_limit_bytes_per_sec: usize,
     pub logging: LoggingOptions,
 }
 
@@ -61,6 +65,8 @@ pub struct PersistedEngineConfig {
     pub l0_stop_segments: usize,
     pub default_memtable_kind: MemTableKind,
     pub default_compaction_strategy: CompactionStrategy,
+    pub flush_rate_limit_bytes_per_sec: usize,
+    pub compaction_rate_limit_bytes_per_sec: usize,
     pub logging: LoggingOptions,
 }
 
@@ -155,6 +161,16 @@ impl TridentConfig {
                 "logging.schema_version must not be empty".to_string(),
             ));
         }
+        if self.flush_rate_limit_bytes_per_sec == 0 {
+            return Err(TridentError::InvalidConfig(
+                "flush_rate_limit_bytes_per_sec must be greater than zero".to_string(),
+            ));
+        }
+        if self.compaction_rate_limit_bytes_per_sec == 0 {
+            return Err(TridentError::InvalidConfig(
+                "compaction_rate_limit_bytes_per_sec must be greater than zero".to_string(),
+            ));
+        }
         Ok(())
     }
 
@@ -178,6 +194,8 @@ impl TridentConfig {
             l0_stop_segments: self.l0_stop_segments,
             default_memtable_kind: self.default_memtable_kind,
             default_compaction_strategy: self.default_compaction_strategy,
+            flush_rate_limit_bytes_per_sec: self.flush_rate_limit_bytes_per_sec,
+            compaction_rate_limit_bytes_per_sec: self.compaction_rate_limit_bytes_per_sec,
             logging: self.logging.clone(),
         }
     }
@@ -213,6 +231,8 @@ impl Default for TridentConfig {
             l0_stop_segments: DEFAULT_L0_STOP_SEGMENTS,
             default_memtable_kind: MemTableKind::SkipList,
             default_compaction_strategy: CompactionStrategy::Leveled,
+            flush_rate_limit_bytes_per_sec: DEFAULT_FLUSH_RATE_LIMIT_BYTES_PER_SEC,
+            compaction_rate_limit_bytes_per_sec: DEFAULT_COMPACTION_RATE_LIMIT_BYTES_PER_SEC,
             logging: LoggingOptions::default(),
         }
     }

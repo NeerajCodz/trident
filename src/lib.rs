@@ -7,6 +7,7 @@ pub mod disk;
 pub mod engine;
 pub mod errors;
 pub mod io;
+pub mod maintenance;
 pub mod manifest;
 pub mod metrics;
 pub mod ram;

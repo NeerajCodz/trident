@@ -24,6 +24,7 @@ pub struct SegmentWriteOptions<'a> {
     pub value_log: &'a mut ValueLog,
     pub large_value_threshold: usize,
     pub block_size: usize,
+    pub partitioned_bloom: Option<(usize, usize)>,
 }
 
 impl SegmentWriter {
@@ -35,6 +36,10 @@ impl SegmentWriter {
             (&left.cf.0, left.key.as_ref()).cmp(&(&right.cf.0, right.key.as_ref()))
         });
         let mut bloom_filter = BloomFilter::with_expected_items(entries.len());
+        let mut partitioned_bloom_filter =
+            options.partitioned_bloom.map(|(prefix_len, partitions)| {
+                crate::segments::PartitionedBloomFilter::new(prefix_len, entries.len(), partitions)
+            });
         let mut out = BinaryWriter::new();
         out.write_u32(SEGMENT_MAGIC);
         out.write_u32(SEGMENT_VERSION);
@@ -57,6 +62,7 @@ impl SegmentWriter {
                     &mut out,
                     &block_entries,
                     &mut bloom_filter,
+                    partitioned_bloom_filter.as_mut(),
                     &mut index,
                 )?;
                 block_entries.clear();
@@ -71,6 +77,7 @@ impl SegmentWriter {
                 &mut out,
                 &block_entries,
                 &mut bloom_filter,
+                partitioned_bloom_filter.as_mut(),
                 &mut index,
             )?;
         }
@@ -99,6 +106,7 @@ impl SegmentWriter {
             max_key,
             entries: entries.len() as u64,
             bloom_filter,
+            partitioned_bloom_filter,
             file_digest: digest.to_hex().to_string(),
         })
     }
@@ -109,10 +117,11 @@ fn write_block(
     out: &mut BinaryWriter,
     entries: &[SegmentEntry],
     bloom_filter: &mut BloomFilter,
+    partitioned_bloom_filter: Option<&mut crate::segments::PartitionedBloomFilter>,
     index: &mut Vec<BlockIndexEntry>,
 ) -> Result<()> {
     let offset = out.len() as u64;
-    let payload = encode_block_entries(options, entries, bloom_filter)?;
+    let payload = encode_block_entries(options, entries, bloom_filter, partitioned_bloom_filter)?;
     let compressed = options
         .accelerator
         .encode_block(options.compression, &payload)?;
@@ -134,11 +143,15 @@ fn encode_block_entries(
     options: &mut SegmentWriteOptions<'_>,
     entries: &[SegmentEntry],
     bloom_filter: &mut BloomFilter,
+    mut partitioned_bloom_filter: Option<&mut crate::segments::PartitionedBloomFilter>,
 ) -> Result<Vec<u8>> {
     let mut payload = BinaryWriter::new();
     payload.write_u32(entries.len() as u32);
     for entry in entries {
         bloom_filter.insert(&bloom_key(&entry.cf.0, &entry.key));
+        if let Some(partitioned) = partitioned_bloom_filter.as_deref_mut() {
+            partitioned.insert(&bloom_key(&entry.cf.0, &entry.key));
+        }
         payload.write_len_bytes(entry.cf.0.as_bytes());
         payload.write_len_bytes(&entry.key);
         payload.write_u64(entry.version.sequence);

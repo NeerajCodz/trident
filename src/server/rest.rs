@@ -1,3 +1,4 @@
+use crate::maintenance::JobPriority;
 use crate::manifest::ColumnFamilyDescriptor;
 use crate::slog;
 use crate::{ColumnFamily, Result, TridentConfig, TridentEngine, TridentError, WriteBatch};
@@ -45,6 +46,9 @@ pub async fn serve_rest(config: RestServerConfig) -> Result<()> {
         .route("/v1/admin/backup", post(backup))
         .route("/v1/admin/restore", post(restore))
         .route("/v1/admin/scan-prefix/{prefix}", get(scan_prefix))
+        .route("/v1/admin/maintenance/flush", post(queue_flush))
+        .route("/v1/admin/maintenance/compact", post(queue_compact))
+        .route("/v1/admin/maintenance/run-next", post(run_next_maintenance))
         .route("/v1/admin/column-families", get(list_column_families))
         .route(
             "/v1/admin/column-families/{name}",
@@ -178,42 +182,85 @@ async fn delete_cf_key(
 }
 
 async fn flush(State(state): State<RestState>) -> Response {
-    match state.engine.flush() {
+    let started = std::time::Instant::now();
+    let response = match state.engine.flush() {
         Ok(segment_id) => Json(serde_json::json!({ "segment_id": segment_id })).into_response(),
         Err(error) => server_error(error),
-    }
+    };
+    log_request(
+        "POST",
+        "/v1/admin/flush",
+        response.status().as_u16(),
+        started,
+    );
+    response
 }
 
 async fn compact(State(state): State<RestState>) -> Response {
-    match state.engine.compact() {
+    let started = std::time::Instant::now();
+    let response = match state.engine.compact() {
         Ok(segments) => Json(serde_json::json!({ "segments": segments })).into_response(),
         Err(error) => server_error(error),
-    }
+    };
+    log_request(
+        "POST",
+        "/v1/admin/compact",
+        response.status().as_u16(),
+        started,
+    );
+    response
 }
 
 async fn checkpoint(State(state): State<RestState>) -> Response {
-    match state.engine.checkpoint() {
+    let started = std::time::Instant::now();
+    let response = match state.engine.checkpoint() {
         Ok(checkpoint) => Json(checkpoint).into_response(),
         Err(error) => server_error(error),
-    }
+    };
+    log_request(
+        "POST",
+        "/v1/admin/checkpoint",
+        response.status().as_u16(),
+        started,
+    );
+    response
 }
 
 async fn gc(State(state): State<RestState>) -> Response {
-    match state.engine.garbage_collect() {
+    let started = std::time::Instant::now();
+    let response = match state.engine.garbage_collect() {
         Ok(report) => Json(report).into_response(),
         Err(error) => server_error(error),
-    }
+    };
+    log_request("POST", "/v1/admin/gc", response.status().as_u16(), started);
+    response
 }
 
 async fn stats(State(state): State<RestState>) -> Response {
-    Json(state.engine.stats()).into_response()
+    let started = std::time::Instant::now();
+    let response = Json(state.engine.stats()).into_response();
+    log_request(
+        "GET",
+        "/v1/admin/stats",
+        response.status().as_u16(),
+        started,
+    );
+    response
 }
 
 async fn verify(State(state): State<RestState>) -> Response {
-    match state.engine.verify() {
+    let started = std::time::Instant::now();
+    let response = match state.engine.verify() {
         Ok(report) => Json(report).into_response(),
         Err(error) => server_error(error),
-    }
+    };
+    log_request(
+        "GET",
+        "/v1/admin/verify",
+        response.status().as_u16(),
+        started,
+    );
+    response
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -227,25 +274,112 @@ struct RestoreRequest {
     target_dir: String,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct QueueJobRequest {
+    reason: Option<String>,
+    priority: Option<String>,
+}
+
 async fn backup(State(state): State<RestState>, Json(request): Json<BackupRequest>) -> Response {
-    match state.engine.backup_to(request.backup_dir) {
+    let started = std::time::Instant::now();
+    let response = match state.engine.backup_to(request.backup_dir) {
         Ok(()) => StatusCode::CREATED.into_response(),
         Err(error) => server_error(error),
-    }
+    };
+    log_request(
+        "POST",
+        "/v1/admin/backup",
+        response.status().as_u16(),
+        started,
+    );
+    response
 }
 
 async fn restore(Json(request): Json<RestoreRequest>) -> Response {
-    match TridentEngine::restore_from_backup(request.backup_dir, request.target_dir) {
+    let started = std::time::Instant::now();
+    let response = match TridentEngine::restore_from_backup(request.backup_dir, request.target_dir)
+    {
         Ok(()) => StatusCode::CREATED.into_response(),
         Err(error) => server_error(error),
-    }
+    };
+    log_request(
+        "POST",
+        "/v1/admin/restore",
+        response.status().as_u16(),
+        started,
+    );
+    response
 }
 
 async fn scan_prefix(State(state): State<RestState>, Path(prefix): Path<String>) -> Response {
-    match state.engine.scan_prefix(prefix.as_bytes(), 1000) {
+    let started = std::time::Instant::now();
+    let response = match state.engine.scan_prefix(prefix.as_bytes(), 1000) {
         Ok(rows) => Json(rows).into_response(),
         Err(error) => server_error(error),
-    }
+    };
+    log_request(
+        "GET",
+        "/v1/admin/scan-prefix/{prefix}",
+        response.status().as_u16(),
+        started,
+    );
+    response
+}
+
+async fn queue_flush(
+    State(state): State<RestState>,
+    Json(request): Json<QueueJobRequest>,
+) -> Response {
+    let started = std::time::Instant::now();
+    let priority = parse_priority(request.priority.as_deref());
+    let id = state.engine.enqueue_flush_job(
+        request.reason.unwrap_or_else(|| "api".to_string()),
+        priority,
+    );
+    let response = Json(serde_json::json!({ "job_id": id })).into_response();
+    log_request(
+        "POST",
+        "/v1/admin/maintenance/flush",
+        response.status().as_u16(),
+        started,
+    );
+    response
+}
+
+async fn queue_compact(
+    State(state): State<RestState>,
+    Json(request): Json<QueueJobRequest>,
+) -> Response {
+    let started = std::time::Instant::now();
+    let priority = parse_priority(request.priority.as_deref());
+    let id = state.engine.enqueue_compaction_job(
+        state.engine.effective_config().default_compaction_strategy,
+        request.reason.unwrap_or_else(|| "api".to_string()),
+        priority,
+    );
+    let response = Json(serde_json::json!({ "job_id": id })).into_response();
+    log_request(
+        "POST",
+        "/v1/admin/maintenance/compact",
+        response.status().as_u16(),
+        started,
+    );
+    response
+}
+
+async fn run_next_maintenance(State(state): State<RestState>) -> Response {
+    let started = std::time::Instant::now();
+    let response = match state.engine.run_next_maintenance_job() {
+        Ok(job_id) => Json(serde_json::json!({ "job_id": job_id })).into_response(),
+        Err(error) => server_error(error),
+    };
+    log_request(
+        "POST",
+        "/v1/admin/maintenance/run-next",
+        response.status().as_u16(),
+        started,
+    );
+    response
 }
 
 async fn list_column_families(State(state): State<RestState>) -> Response {
@@ -307,4 +441,12 @@ fn log_request(method: &str, route: &str, status: u16, started: std::time::Insta
             .with_u64("duration_ms", started.elapsed().as_millis() as u64)
             .with_str("outcome", outcome),
     );
+}
+
+fn parse_priority(priority: Option<&str>) -> JobPriority {
+    match priority.unwrap_or("normal") {
+        "high" => JobPriority::High,
+        "low" => JobPriority::Low,
+        _ => JobPriority::Normal,
+    }
 }

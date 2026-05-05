@@ -220,6 +220,34 @@ fn memtable_flush_threshold_bounds_ram_growth() {
 }
 
 #[test]
+fn l0_pressure_triggers_compaction_before_accepting_more_writes() {
+    let dir = tempdir().unwrap();
+    let mut config = TridentConfig::new(dir.path());
+    config.l0_slowdown_segments = 1;
+    config.l0_stop_segments = 2;
+    let engine = TridentEngine::open(config).unwrap();
+
+    engine
+        .put(Bytes::from("pressure/a"), Bytes::from("1"))
+        .unwrap();
+    engine.flush().unwrap();
+    engine
+        .put(Bytes::from("pressure/b"), Bytes::from("2"))
+        .unwrap();
+
+    let stats = engine.stats();
+    assert_eq!(stats["metrics"]["write_stalls"].as_u64().unwrap(), 1);
+    assert_eq!(
+        stats["metrics"]["l0_pressure_compactions"]
+            .as_u64()
+            .unwrap(),
+        1
+    );
+    assert_eq!(engine.get("pressure/a").unwrap().unwrap(), Bytes::from("1"));
+    assert_eq!(engine.get("pressure/b").unwrap().unwrap(), Bytes::from("2"));
+}
+
+#[test]
 fn segment_bloom_filter_rejects_absent_disk_key() {
     let dir = tempdir().unwrap();
     let engine = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();

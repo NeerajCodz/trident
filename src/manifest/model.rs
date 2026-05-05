@@ -1,6 +1,6 @@
 use crate::config::{
-    DEFAULT_LARGE_VALUE_THRESHOLD, DEFAULT_MEMTABLE_FLUSH_THRESHOLD_BYTES, PersistedEngineConfig,
-    TridentConfig,
+    CompactionStrategy, Compression, DEFAULT_LARGE_VALUE_THRESHOLD,
+    DEFAULT_MEMTABLE_FLUSH_THRESHOLD_BYTES, MemTableKind, PersistedEngineConfig, TridentConfig,
 };
 use serde::{Deserialize, Serialize};
 
@@ -30,7 +30,14 @@ impl Manifest {
             last_sequence: 0,
             next_segment_id: 1,
             latest_checkpoint: None,
-            column_families: vec![ColumnFamilyDescriptor::default()],
+            column_families: vec![ColumnFamilyDescriptor {
+                options: ColumnFamilyOptions {
+                    memtable_kind: config.default_memtable_kind,
+                    compaction_strategy: config.default_compaction_strategy,
+                    ..ColumnFamilyOptions::default()
+                },
+                ..ColumnFamilyDescriptor::default()
+            }],
             segments: Vec::new(),
         }
     }
@@ -71,6 +78,8 @@ pub struct ColumnFamilyDescriptor {
     pub write_buffer_size_bytes: usize,
     pub large_value_threshold_bytes: usize,
     pub bloom_enabled: bool,
+    #[serde(default)]
+    pub options: ColumnFamilyOptions,
 }
 
 impl Default for ColumnFamilyDescriptor {
@@ -80,6 +89,30 @@ impl Default for ColumnFamilyDescriptor {
             write_buffer_size_bytes: DEFAULT_MEMTABLE_FLUSH_THRESHOLD_BYTES,
             large_value_threshold_bytes: DEFAULT_LARGE_VALUE_THRESHOLD,
             bloom_enabled: true,
+            options: ColumnFamilyOptions::default(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ColumnFamilyOptions {
+    pub memtable_kind: MemTableKind,
+    pub compaction_strategy: CompactionStrategy,
+    pub compression_override: Option<Compression>,
+    pub ttl_seconds: Option<u64>,
+    pub cache_partition_percent: Option<u8>,
+    pub merge_operator: Option<String>,
+}
+
+impl Default for ColumnFamilyOptions {
+    fn default() -> Self {
+        Self {
+            memtable_kind: MemTableKind::SkipList,
+            compaction_strategy: CompactionStrategy::Leveled,
+            compression_override: None,
+            ttl_seconds: None,
+            cache_partition_percent: None,
+            merge_operator: None,
         }
     }
 }

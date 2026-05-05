@@ -53,6 +53,8 @@ impl<'a> ValueRef<'a> {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum StoredValue {
     Put(Vec<u8>),
+    PutWithExpiry { value: Vec<u8>, expires_at_ms: u64 },
+    Merge(Vec<u8>),
     BlobPointer(ValuePointer),
     Delete,
 }

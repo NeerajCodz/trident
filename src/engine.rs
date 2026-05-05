@@ -3,12 +3,15 @@ use crate::cache::BlockCache;
 use crate::config::{AcceleratorBackend, PersistedEngineConfig, TridentConfig};
 use crate::disk::DiskLayout;
 use crate::errors::{Result, TridentError};
-use crate::manifest::{CheckpointMetadata, ColumnFamilyDescriptor, Manifest, ManifestStore};
+use crate::manifest::{
+    CheckpointMetadata, ColumnFamilyDescriptor, ColumnFamilyOptions, Manifest, ManifestStore,
+};
 use crate::metrics::EngineMetrics;
 use crate::ram::{MemTable, PinnedSnapshot, SnapshotManager};
 use crate::recovery::{GcReport, RecoveryReport, write_checkpoint};
 use crate::segments::bloom::bloom_key;
 use crate::segments::{SegmentReader, SegmentWriteOptions, SegmentWriter};
+use crate::slog;
 use crate::transactions::OptimisticTransaction;
 use crate::transactions::{BatchOp, WriteBatch};
 use crate::types::{
@@ -22,6 +25,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct TridentEngine {
     inner: Arc<EngineInner>,
@@ -44,6 +48,7 @@ struct EngineInner {
 impl TridentEngine {
     pub fn open(config: TridentConfig) -> Result<Self> {
         config.validate()?;
+        slog::Logger::init(config.logging.clone());
         let accelerator: Arc<dyn Accelerator> = match config.accelerator {
             AcceleratorBackend::Cpu => Arc::new(CpuAccelerator),
             AcceleratorBackend::Cuda => {
@@ -101,7 +106,7 @@ impl TridentEngine {
         metrics
             .recovered_records
             .store(wal_records.len() as u64, Ordering::Relaxed);
-        Ok(Self {
+        let engine = Self {
             inner: Arc::new(EngineInner {
                 cache: Mutex::new(BlockCache::new(config.cache_size_bytes)),
                 config,
@@ -115,7 +120,15 @@ impl TridentEngine {
                 metrics,
                 accelerator,
             }),
-        })
+        };
+        slog::info(
+            "engine_open",
+            slog::context().with_str("outcome", "success").with_str(
+                "data_dir",
+                engine.inner.layout.root().to_string_lossy().to_string(),
+            ),
+        );
+        Ok(engine)
     }
 
     pub fn open_from_file(path: impl Into<PathBuf>) -> Result<Self> {
@@ -135,6 +148,29 @@ impl TridentEngine {
     pub fn delete(&self, key: impl Into<Key>) -> Result<SequenceNumber> {
         let mut batch = WriteBatch::new();
         batch.delete_default(key);
+        self.write_batch(batch)
+    }
+
+    pub fn put_with_ttl(
+        &self,
+        key: impl Into<Key>,
+        value: impl Into<Value>,
+        ttl_seconds: u64,
+    ) -> Result<SequenceNumber> {
+        let mut batch = WriteBatch::new();
+        let expires_at_ms = now_millis().saturating_add(ttl_seconds.saturating_mul(1000));
+        batch.put_with_expiry(ColumnFamily::default(), key, value, expires_at_ms);
+        self.write_batch(batch)
+    }
+
+    pub fn merge(
+        &self,
+        cf: impl Into<ColumnFamily>,
+        key: impl Into<Key>,
+        value: impl Into<Value>,
+    ) -> Result<SequenceNumber> {
+        let mut batch = WriteBatch::new();
+        batch.merge(cf, key, value);
         self.write_batch(batch)
     }
 
@@ -167,10 +203,12 @@ impl TridentEngine {
     }
 
     pub fn write_batch(&self, batch: WriteBatch) -> Result<SequenceNumber> {
+        let started = std::time::Instant::now();
         if batch.is_empty() {
             return Ok(self.snapshot().sequence);
         }
         self.validate_batch_column_families(&batch)?;
+        let batch = self.normalize_batch_with_cf_policies(batch)?;
         self.relieve_l0_pressure_before_write()?;
         let sequence = self.inner.snapshots.next_sequence();
         let record = WalRecord {
@@ -184,7 +222,7 @@ impl TridentEngine {
             for op in batch.ops() {
                 memtable.apply(sequence, op);
                 match op {
-                    BatchOp::Put { .. } => {
+                    BatchOp::Put { .. } | BatchOp::PutWithExpiry { .. } | BatchOp::Merge { .. } => {
                         self.inner.metrics.writes.fetch_add(1, Ordering::Relaxed);
                     }
                     BatchOp::Delete { .. } => {
@@ -213,7 +251,65 @@ impl TridentEngine {
                 .automatic_flushes
                 .fetch_add(1, Ordering::Relaxed);
         }
+        slog::info(
+            "write_batch",
+            slog::context()
+                .with_u64("seq", sequence)
+                .with_u64("ops", batch.len() as u64)
+                .with_u64("duration_ms", started.elapsed().as_millis() as u64)
+                .with_str("outcome", "success"),
+        );
         Ok(sequence)
+    }
+
+    fn normalize_batch_with_cf_policies(&self, batch: WriteBatch) -> Result<WriteBatch> {
+        let options = self.cf_options_map();
+        let mut normalized = WriteBatch::new();
+        for op in batch.ops() {
+            match op {
+                BatchOp::Put { cf, key, value } => {
+                    if let Some(ttl_seconds) = options.get(&cf.0).and_then(|cf| cf.ttl_seconds) {
+                        let expires_at_ms = now_millis().saturating_add(ttl_seconds * 1000);
+                        normalized.put_with_expiry(
+                            cf.clone(),
+                            Bytes::copy_from_slice(key),
+                            Bytes::copy_from_slice(value),
+                            expires_at_ms,
+                        );
+                    } else {
+                        normalized.put(
+                            cf.clone(),
+                            Bytes::copy_from_slice(key),
+                            Bytes::copy_from_slice(value),
+                        );
+                    }
+                }
+                BatchOp::PutWithExpiry {
+                    cf,
+                    key,
+                    value,
+                    expires_at_ms,
+                } => {
+                    normalized.put_with_expiry(
+                        cf.clone(),
+                        Bytes::copy_from_slice(key),
+                        Bytes::copy_from_slice(value),
+                        *expires_at_ms,
+                    );
+                }
+                BatchOp::Merge { cf, key, value } => {
+                    normalized.merge(
+                        cf.clone(),
+                        Bytes::copy_from_slice(key),
+                        Bytes::copy_from_slice(value),
+                    );
+                }
+                BatchOp::Delete { cf, key } => {
+                    normalized.delete(cf.clone(), Bytes::copy_from_slice(key));
+                }
+            };
+        }
+        Ok(normalized)
     }
 
     fn rotate_wal_if_needed(&self, next_record_len: usize) -> Result<()> {
@@ -294,14 +390,8 @@ impl TridentEngine {
     ) -> Result<Option<Value>> {
         self.ensure_column_family(cf)?;
         self.inner.metrics.reads.fetch_add(1, Ordering::Relaxed);
-        if let Some(value) = self.inner.memtable.lock().get(cf, key, snapshot.sequence) {
-            return Ok(match value {
-                StoredValue::Put(value) => Some(Bytes::from(value)),
-                StoredValue::BlobPointer(pointer) => {
-                    Some(Bytes::from(ValueLog::read_pointer(&pointer)?))
-                }
-                StoredValue::Delete => None,
-            });
+        if let Some(value) = self.resolve_value_at_snapshot(cf, key, snapshot.sequence)? {
+            return Ok(Some(Bytes::from(value)));
         }
         let cache_key = (snapshot.sequence, key.to_vec());
         if let Some(value) = self.inner.cache.lock().get(&cache_key) {
@@ -322,36 +412,24 @@ impl TridentEngine {
                 .fetch_add(1, Ordering::Relaxed);
             return Ok(None);
         }
-        let value = self
-            .inner
-            .segment_index
-            .lock()
-            .get(&(cf.clone(), Bytes::copy_from_slice(key)))
-            .and_then(|versions| {
-                versions
-                    .iter()
-                    .rev()
-                    .find(|version| version.sequence <= snapshot.sequence)
-                    .cloned()
-            });
-        Ok(match value.map(|version| version.value) {
-            Some(StoredValue::Put(value)) => {
+        let resolved = self.resolve_value_at_snapshot(cf, key, snapshot.sequence)?;
+        Ok(match resolved {
+            Some(value) => {
                 let value = Bytes::from(value);
                 self.inner.cache.lock().insert(cache_key, value.clone());
                 Some(value)
             }
-            Some(StoredValue::BlobPointer(pointer)) => {
-                let value = Bytes::from(ValueLog::read_pointer(&pointer)?);
-                self.inner.cache.lock().insert(cache_key, value.clone());
-                Some(value)
-            }
-            Some(StoredValue::Delete) | None => None,
+            None => None,
         })
     }
 
-    pub fn create_column_family(&self, descriptor: ColumnFamilyDescriptor) -> Result<()> {
+    pub fn create_column_family(&self, mut descriptor: ColumnFamilyDescriptor) -> Result<()> {
         if descriptor.name == ColumnFamily::default().0 {
             return Ok(());
+        }
+        if descriptor.options == ColumnFamilyOptions::default() {
+            descriptor.options.memtable_kind = self.inner.config.default_memtable_kind;
+            descriptor.options.compaction_strategy = self.inner.config.default_compaction_strategy;
         }
         let mut manifest = self.inner.manifest.lock();
         if manifest
@@ -393,7 +471,10 @@ impl TridentEngine {
     fn validate_batch_column_families(&self, batch: &WriteBatch) -> Result<()> {
         for op in batch.ops() {
             let cf = match op {
-                BatchOp::Put { cf, .. } | BatchOp::Delete { cf, .. } => cf,
+                BatchOp::Put { cf, .. }
+                | BatchOp::PutWithExpiry { cf, .. }
+                | BatchOp::Merge { cf, .. }
+                | BatchOp::Delete { cf, .. } => cf,
             };
             self.ensure_column_family(cf)?;
         }
@@ -407,7 +488,10 @@ impl TridentEngine {
     ) -> Result<()> {
         for op in batch.ops() {
             let (cf, key) = match op {
-                BatchOp::Put { cf, key, .. } | BatchOp::Delete { cf, key } => (cf, key),
+                BatchOp::Put { cf, key, .. }
+                | BatchOp::PutWithExpiry { cf, key, .. }
+                | BatchOp::Merge { cf, key, .. }
+                | BatchOp::Delete { cf, key } => (cf, key),
             };
             if self.latest_sequence_for_key(cf, key)? > snapshot.sequence {
                 return Err(TridentError::TransactionConflict {
@@ -499,20 +583,8 @@ impl TridentEngine {
             if rows.contains_key(key) {
                 continue;
             }
-            if let Some(version) = versions
-                .iter()
-                .rev()
-                .find(|version| version.sequence <= snapshot.sequence)
-            {
-                match &version.value {
-                    StoredValue::Put(value) => {
-                        rows.insert(key.clone(), Bytes::from(value.clone()));
-                    }
-                    StoredValue::BlobPointer(pointer) => {
-                        rows.insert(key.clone(), Bytes::from(ValueLog::read_pointer(pointer)?));
-                    }
-                    StoredValue::Delete => {}
-                }
+            if let Some(value) = self.resolve_versions_chain(&cf, versions, snapshot.sequence)? {
+                rows.insert(key.clone(), Bytes::from(value));
             }
         }
         Ok(rows.into_iter().take(limit).collect())
@@ -527,6 +599,7 @@ impl TridentEngine {
     }
 
     pub fn flush(&self) -> Result<Option<u64>> {
+        let started = std::time::Instant::now();
         let entries = self.inner.memtable.lock().drain_latest();
         if entries.is_empty() {
             return Ok(None);
@@ -552,9 +625,11 @@ impl TridentEngine {
                 accelerator: self.inner.accelerator.as_ref(),
                 value_log: &mut value_log,
                 large_value_threshold: self.inner.config.large_value_threshold,
+                block_size: self.inner.config.block_size,
             },
             segment_entries,
         )?;
+        let flushed_entries = metadata.entries;
         let loaded = SegmentReader::read(&path, self.inner.accelerator.as_ref())?;
         {
             let mut segment_index = self.inner.segment_index.lock();
@@ -580,21 +655,36 @@ impl TridentEngine {
             .metrics
             .segment_flushes
             .fetch_add(1, Ordering::Relaxed);
+        slog::info(
+            "flush",
+            slog::context()
+                .with_u64("segment_id", segment_id)
+                .with_u64("entries", flushed_entries)
+                .with_u64("duration_ms", started.elapsed().as_millis() as u64)
+                .with_str("outcome", "success"),
+        );
         Ok(Some(segment_id))
     }
 
     pub fn compact(&self) -> Result<u64> {
+        let started = std::time::Instant::now();
         self.flush()?;
         let latest_sequence = self.snapshot().sequence;
         let oldest_pinned = self.inner.snapshots.oldest_pinned_sequence();
         let mut compacted = Vec::new();
+        let cf_options = self.cf_options_map();
         for ((cf, key), versions) in self.inner.segment_index.lock().iter() {
+            let strategy = cf_options
+                .get(&cf.0)
+                .map(|options| options.compaction_strategy)
+                .unwrap_or(self.inner.config.default_compaction_strategy);
             compacted.extend(self.compaction_retained_versions(
                 cf,
                 key,
                 versions,
                 latest_sequence,
                 oldest_pinned,
+                strategy,
             ));
         }
         if compacted.is_empty() {
@@ -622,9 +712,11 @@ impl TridentEngine {
                 accelerator: self.inner.accelerator.as_ref(),
                 value_log: &mut value_log,
                 large_value_threshold: self.inner.config.large_value_threshold,
+                block_size: self.inner.config.block_size,
             },
             compacted,
         )?;
+        let compacted_entries = metadata.entries;
         let loaded = SegmentReader::read(&path, self.inner.accelerator.as_ref())?;
         let mut rebuilt = BTreeMap::new();
         for entry in loaded {
@@ -643,6 +735,14 @@ impl TridentEngine {
             manifest.segments.push(metadata);
             self.inner.manifest_store.save(&manifest)?;
         }
+        slog::info(
+            "compact",
+            slog::context()
+                .with_u64("new_segments", 1)
+                .with_u64("entries", compacted_entries)
+                .with_u64("duration_ms", started.elapsed().as_millis() as u64)
+                .with_str("outcome", "success"),
+        );
         Ok(1)
     }
 
@@ -653,11 +753,52 @@ impl TridentEngine {
         versions: &[VersionedValue],
         latest_sequence: SequenceNumber,
         oldest_pinned: Option<SequenceNumber>,
+        strategy: crate::config::CompactionStrategy,
     ) -> Vec<crate::segments::block::SegmentEntry> {
         let mut retained = Vec::new();
+        let now = now_millis();
+        let not_expired = |version: &&VersionedValue| match &version.value {
+            StoredValue::PutWithExpiry { expires_at_ms, .. } => *expires_at_ms > now,
+            _ => true,
+        };
+
+        if versions.is_empty() {
+            return retained;
+        }
+
+        if matches!(strategy, crate::config::CompactionStrategy::Tiered) {
+            for version in versions.iter().filter(not_expired) {
+                if let Some(pinned) = oldest_pinned
+                    && version.sequence > latest_sequence
+                    && version.sequence > pinned
+                {
+                    continue;
+                }
+                retained.push(crate::segments::block::SegmentEntry {
+                    cf: cf.clone(),
+                    key: key.clone(),
+                    version: version.clone(),
+                });
+            }
+            return retained;
+        }
+
+        if matches!(strategy, crate::config::CompactionStrategy::Universal) {
+            for version in versions.iter().rev().filter(not_expired).take(4) {
+                retained.push(crate::segments::block::SegmentEntry {
+                    cf: cf.clone(),
+                    key: key.clone(),
+                    version: version.clone(),
+                });
+            }
+            retained.sort_by_key(|entry| entry.version.sequence);
+            return retained;
+        }
+
         let Some(newest) = versions
             .iter()
             .rev()
+            .filter(not_expired)
             .find(|version| version.sequence <= latest_sequence)
         else {
             return retained;
@@ -693,7 +834,74 @@ impl TridentEngine {
         retained
     }
 
+    fn resolve_value_at_snapshot(
+        &self,
+        cf: &ColumnFamily,
+        key: &[u8],
+        snapshot: SequenceNumber,
+    ) -> Result<Option<Vec<u8>>> {
+        let mut chain = self
+            .inner
+            .segment_index
+            .lock()
+            .get(&(cf.clone(), Bytes::copy_from_slice(key)))
+            .cloned()
+            .unwrap_or_default();
+        chain.extend(self.inner.memtable.lock().versions_for_key(cf, key));
+        chain.sort_by_key(|version| version.sequence);
+        self.resolve_versions_chain(cf, &chain, snapshot)
+    }
+
+    fn resolve_versions_chain(
+        &self,
+        cf: &ColumnFamily,
+        chain: &[VersionedValue],
+        snapshot: SequenceNumber,
+    ) -> Result<Option<Vec<u8>>> {
+        let merge_operator = self
+            .cf_options_map()
+            .get(&cf.0)
+            .and_then(|options| options.merge_operator.clone())
+            .unwrap_or_else(|| "append_bytes".to_string());
+        let mut state = None::<Vec<u8>>;
+        for version in chain.iter().filter(|version| version.sequence <= snapshot) {
+            match version.value {
+                StoredValue::Put(ref value) => state = Some(value.clone()),
+                StoredValue::PutWithExpiry {
+                    ref value,
+                    expires_at_ms,
+                } => {
+                    if expires_at_ms > now_millis() {
+                        state = Some(value.clone());
+                    } else {
+                        state = None;
+                    }
+                }
+                StoredValue::Merge(ref delta) => {
+                    let base = state.as_deref().unwrap_or(&[]);
+                    state = apply_merge_operator(&merge_operator, base, delta);
+                }
+                StoredValue::Delete => state = None,
+                StoredValue::BlobPointer(ref pointer) => {
+                    state = Some(ValueLog::read_pointer(pointer)?);
+                }
+            }
+        }
+        Ok(state)
+    }
+
+    fn cf_options_map(&self) -> BTreeMap<String, ColumnFamilyOptions> {
+        self.inner
+            .manifest
+            .lock()
+            .column_families
+            .iter()
+            .map(|descriptor| (descriptor.name.clone(), descriptor.options.clone()))
+            .collect()
+    }
+
     pub fn checkpoint(&self) -> Result<CheckpointMetadata> {
+        let started = std::time::Instant::now();
         self.flush()?;
         let checkpoint_id = self.snapshot().sequence;
         let path = self.inner.layout.checkpoint_path(checkpoint_id);
@@ -710,10 +918,19 @@ impl TridentEngine {
             .metrics
             .checkpoints
             .fetch_add(1, Ordering::Relaxed);
+        slog::info(
+            "checkpoint",
+            slog::context()
+                .with_u64("id", checkpoint.id)
+                .with_u64("sequence", checkpoint.sequence)
+                .with_u64("duration_ms", started.elapsed().as_millis() as u64)
+                .with_str("outcome", "success"),
+        );
         Ok(checkpoint)
     }
 
     pub fn garbage_collect(&self) -> Result<GcReport> {
+        let started = std::time::Instant::now();
         let manifest = self.inner.manifest.lock().clone();
         let mut live_files = HashSet::new();
         for segment in &manifest.segments {
@@ -757,6 +974,14 @@ impl TridentEngine {
             .metrics
             .gc_bytes_reclaimed
             .fetch_add(report.bytes_reclaimed, Ordering::Relaxed);
+        slog::info(
+            "garbage_collect",
+            slog::context()
+                .with_u64("files_reclaimed", report.files_reclaimed)
+                .with_u64("bytes_reclaimed", report.bytes_reclaimed)
+                .with_u64("duration_ms", started.elapsed().as_millis() as u64)
+                .with_str("outcome", "success"),
+        );
         Ok(report)
     }
 
@@ -870,6 +1095,42 @@ impl TridentEngine {
             "id": wal.segment_id(),
             "path": wal.path().to_string_lossy(),
         })
+    }
+}
+
+fn now_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn apply_merge_operator(name: &str, current: &[u8], delta: &[u8]) -> Option<Vec<u8>> {
+    match name {
+        "sum_i64" => {
+            let left = if current.is_empty() {
+                0_i64
+            } else {
+                i64::from_le_bytes(current.try_into().ok()?)
+            };
+            let right = i64::from_le_bytes(delta.try_into().ok()?);
+            Some((left + right).to_le_bytes().to_vec())
+        }
+        "max_u64" => {
+            let left = if current.is_empty() {
+                0_u64
+            } else {
+                u64::from_le_bytes(current.try_into().ok()?)
+            };
+            let right = u64::from_le_bytes(delta.try_into().ok()?);
+            Some(left.max(right).to_le_bytes().to_vec())
+        }
+        _ => {
+            let mut merged = Vec::with_capacity(current.len() + delta.len());
+            merged.extend_from_slice(current);
+            merged.extend_from_slice(delta);
+            Some(merged)
+        }
     }
 }
 

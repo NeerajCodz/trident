@@ -22,6 +22,34 @@ impl MemTable {
                         value: StoredValue::Put(value.clone()),
                     });
             }
+            BatchOp::PutWithExpiry {
+                cf,
+                key,
+                value,
+                expires_at_ms,
+            } => {
+                self.approximate_bytes += cf.0.len() + key.len() + value.len() + 40;
+                self.entries
+                    .entry((cf.clone(), Bytes::from(key.clone())))
+                    .or_default()
+                    .push(VersionedValue {
+                        sequence,
+                        value: StoredValue::PutWithExpiry {
+                            value: value.clone(),
+                            expires_at_ms: *expires_at_ms,
+                        },
+                    });
+            }
+            BatchOp::Merge { cf, key, value } => {
+                self.approximate_bytes += cf.0.len() + key.len() + value.len() + 32;
+                self.entries
+                    .entry((cf.clone(), Bytes::from(key.clone())))
+                    .or_default()
+                    .push(VersionedValue {
+                        sequence,
+                        value: StoredValue::Merge(value.clone()),
+                    });
+            }
             BatchOp::Delete { cf, key } => {
                 self.approximate_bytes += cf.0.len() + key.len() + 24;
                 self.entries
@@ -74,7 +102,8 @@ impl MemTable {
                 .iter()
                 .rev()
                 .find(|version| version.sequence <= snapshot)
-                && let StoredValue::Put(value) = &version.value
+                && let StoredValue::Put(value) | StoredValue::PutWithExpiry { value, .. } =
+                    &version.value
             {
                 out.push((key.clone(), Bytes::from(value.clone())));
             }
@@ -99,6 +128,13 @@ impl MemTable {
             .get(&(cf.clone(), Bytes::copy_from_slice(key)))
             .and_then(|versions| versions.last())
             .map(|version| version.sequence)
+    }
+
+    pub fn versions_for_key(&self, cf: &ColumnFamily, key: &[u8]) -> Vec<VersionedValue> {
+        self.entries
+            .get(&(cf.clone(), Bytes::copy_from_slice(key)))
+            .cloned()
+            .unwrap_or_default()
     }
 
     pub fn is_empty(&self) -> bool {

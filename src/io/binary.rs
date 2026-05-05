@@ -35,6 +35,14 @@ impl BinaryWriter {
     pub fn into_inner(self) -> Vec<u8> {
         self.bytes
     }
+
+    pub fn len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
 }
 
 impl Default for BinaryWriter {

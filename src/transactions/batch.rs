@@ -9,6 +9,17 @@ pub enum BatchOp {
         key: Vec<u8>,
         value: Vec<u8>,
     },
+    PutWithExpiry {
+        cf: ColumnFamily,
+        key: Vec<u8>,
+        value: Vec<u8>,
+        expires_at_ms: u64,
+    },
+    Merge {
+        cf: ColumnFamily,
+        key: Vec<u8>,
+        value: Vec<u8>,
+    },
     Delete {
         cf: ColumnFamily,
         key: Vec<u8>,
@@ -41,6 +52,36 @@ impl WriteBatch {
 
     pub fn put_default(&mut self, key: impl Into<Bytes>, value: impl Into<Bytes>) -> &mut Self {
         self.put(ColumnFamily::default(), key, value)
+    }
+
+    pub fn put_with_expiry(
+        &mut self,
+        cf: impl Into<ColumnFamily>,
+        key: impl Into<Key>,
+        value: impl Into<Value>,
+        expires_at_ms: u64,
+    ) -> &mut Self {
+        self.ops.push(BatchOp::PutWithExpiry {
+            cf: cf.into(),
+            key: key.into().to_vec(),
+            value: value.into().to_vec(),
+            expires_at_ms,
+        });
+        self
+    }
+
+    pub fn merge(
+        &mut self,
+        cf: impl Into<ColumnFamily>,
+        key: impl Into<Key>,
+        value: impl Into<Value>,
+    ) -> &mut Self {
+        self.ops.push(BatchOp::Merge {
+            cf: cf.into(),
+            key: key.into().to_vec(),
+            value: value.into().to_vec(),
+        });
+        self
     }
 
     pub fn delete(&mut self, cf: impl Into<ColumnFamily>, key: impl Into<Key>) -> &mut Self {

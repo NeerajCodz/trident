@@ -1,4 +1,5 @@
 use crate::manifest::ColumnFamilyDescriptor;
+use crate::slog;
 use crate::{ColumnFamily, Result, TridentConfig, TridentEngine, TridentError, WriteBatch};
 use axum::body::Bytes as BodyBytes;
 use axum::extract::{Path, State};
@@ -63,11 +64,14 @@ async fn health() -> Json<HealthResponse> {
 }
 
 async fn get_key(State(state): State<RestState>, Path(key): Path<String>) -> Response {
-    match state.engine.get(key.as_bytes()) {
+    let started = std::time::Instant::now();
+    let response = match state.engine.get(key.as_bytes()) {
         Ok(Some(value)) => (StatusCode::OK, value).into_response(),
         Ok(None) => StatusCode::NOT_FOUND.into_response(),
         Err(error) => server_error(error),
-    }
+    };
+    log_request("GET", "/v1/kv/{key}", response.status().as_u16(), started);
+    response
 }
 
 async fn put_key(
@@ -75,34 +79,54 @@ async fn put_key(
     Path(key): Path<String>,
     body: BodyBytes,
 ) -> Response {
-    match state
+    let started = std::time::Instant::now();
+    let response = match state
         .engine
         .put(BodyBytes::from(key).to_vec(), body.to_vec())
     {
         Ok(sequence) => Json(serde_json::json!({ "sequence": sequence })).into_response(),
         Err(error) => server_error(error),
-    }
+    };
+    log_request("PUT", "/v1/kv/{key}", response.status().as_u16(), started);
+    response
 }
 
 async fn delete_key(State(state): State<RestState>, Path(key): Path<String>) -> Response {
-    match state.engine.delete(BodyBytes::from(key).to_vec()) {
+    let started = std::time::Instant::now();
+    let response = match state.engine.delete(BodyBytes::from(key).to_vec()) {
         Ok(sequence) => Json(serde_json::json!({ "sequence": sequence })).into_response(),
         Err(error) => server_error(error),
-    }
+    };
+    log_request(
+        "DELETE",
+        "/v1/kv/{key}",
+        response.status().as_u16(),
+        started,
+    );
+    response
 }
 
 async fn get_cf_key(
     State(state): State<RestState>,
     Path((cf, key)): Path<(String, String)>,
 ) -> Response {
-    match state
-        .engine
-        .get_cf(&ColumnFamily(cf), key.as_bytes(), state.engine.snapshot())
-    {
-        Ok(Some(value)) => (StatusCode::OK, value).into_response(),
-        Ok(None) => StatusCode::NOT_FOUND.into_response(),
-        Err(error) => server_error(error),
-    }
+    let started = std::time::Instant::now();
+    let response =
+        match state
+            .engine
+            .get_cf(&ColumnFamily(cf), key.as_bytes(), state.engine.snapshot())
+        {
+            Ok(Some(value)) => (StatusCode::OK, value).into_response(),
+            Ok(None) => StatusCode::NOT_FOUND.into_response(),
+            Err(error) => server_error(error),
+        };
+    log_request(
+        "GET",
+        "/v1/cf/{cf}/kv/{key}",
+        response.status().as_u16(),
+        started,
+    );
+    response
 }
 
 async fn put_cf_key(
@@ -110,28 +134,44 @@ async fn put_cf_key(
     Path((cf, key)): Path<(String, String)>,
     body: BodyBytes,
 ) -> Response {
+    let started = std::time::Instant::now();
     let mut batch = WriteBatch::new();
     batch.put(
         ColumnFamily(cf),
         BodyBytes::from(key).to_vec(),
         body.to_vec(),
     );
-    match state.engine.write_batch(batch) {
+    let response = match state.engine.write_batch(batch) {
         Ok(sequence) => Json(serde_json::json!({ "sequence": sequence })).into_response(),
         Err(error) => server_error(error),
-    }
+    };
+    log_request(
+        "PUT",
+        "/v1/cf/{cf}/kv/{key}",
+        response.status().as_u16(),
+        started,
+    );
+    response
 }
 
 async fn delete_cf_key(
     State(state): State<RestState>,
     Path((cf, key)): Path<(String, String)>,
 ) -> Response {
+    let started = std::time::Instant::now();
     let mut batch = WriteBatch::new();
     batch.delete(ColumnFamily(cf), BodyBytes::from(key).to_vec());
-    match state.engine.write_batch(batch) {
+    let response = match state.engine.write_batch(batch) {
         Ok(sequence) => Json(serde_json::json!({ "sequence": sequence })).into_response(),
         Err(error) => server_error(error),
-    }
+    };
+    log_request(
+        "DELETE",
+        "/v1/cf/{cf}/kv/{key}",
+        response.status().as_u16(),
+        started,
+    );
+    response
 }
 
 async fn flush(State(state): State<RestState>) -> Response {
@@ -213,4 +253,23 @@ fn server_error(error: crate::TridentError) -> Response {
         Json(serde_json::json!({ "error": error.to_string() })),
     )
         .into_response()
+}
+
+fn log_request(method: &str, route: &str, status: u16, started: std::time::Instant) {
+    let outcome = if status >= 500 {
+        "error"
+    } else if status >= 400 {
+        "client_error"
+    } else {
+        "success"
+    };
+    slog::info(
+        "rest_request_complete",
+        slog::context()
+            .with_str("method", method)
+            .with_str("route", route)
+            .with_u64("status", status as u64)
+            .with_u64("duration_ms", started.elapsed().as_millis() as u64)
+            .with_str("outcome", outcome),
+    );
 }

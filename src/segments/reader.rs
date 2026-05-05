@@ -1,7 +1,7 @@
 use crate::accel::Accelerator;
 use crate::config::Compression;
 use crate::errors::{Result, TridentError};
-use crate::io::{BinaryReader, crc32c};
+use crate::io::{BinaryReader, crc32c, read_file_with_policy};
 use crate::segments::block::SegmentEntry;
 use crate::segments::format::{
     BlockIndexEntry, SEGMENT_FOOTER_MAGIC, SEGMENT_FOOTER_TRAILER_LEN, SEGMENT_HEADER_LEN,
@@ -9,14 +9,17 @@ use crate::segments::format::{
 };
 use crate::types::{ColumnFamily, StoredValue, ValuePointer, VersionedValue};
 use bytes::Bytes;
-use std::fs;
 use std::path::{Path, PathBuf};
 
 pub struct SegmentReader;
 
 impl SegmentReader {
-    pub fn read(path: &Path, accelerator: &dyn Accelerator) -> Result<Vec<SegmentEntry>> {
-        let bytes = fs::read(path)?;
+    pub fn read(
+        path: &Path,
+        accelerator: &dyn Accelerator,
+        requested_direct_io: bool,
+    ) -> Result<Vec<SegmentEntry>> {
+        let (bytes, _) = read_file_with_policy(path, requested_direct_io)?;
         let mut reader = BinaryReader::new(&bytes, path);
         let magic = reader.read_u32()?;
         if magic != SEGMENT_MAGIC {

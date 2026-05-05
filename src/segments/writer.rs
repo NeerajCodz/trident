@@ -1,7 +1,7 @@
 use crate::accel::Accelerator;
 use crate::config::Compression;
 use crate::errors::Result;
-use crate::io::{BinaryWriter, file_digest};
+use crate::io::{BinaryWriter, file_digest, write_file_with_policy};
 use crate::manifest::SegmentMetadata;
 use crate::segments::block::SegmentEntry;
 use crate::segments::bloom::{BloomFilter, bloom_key};
@@ -10,7 +10,6 @@ use crate::segments::format::{
 };
 use crate::types::StoredValue;
 use crate::values::ValueLog;
-use std::fs;
 use std::path::Path;
 
 pub struct SegmentWriter;
@@ -25,6 +24,7 @@ pub struct SegmentWriteOptions<'a> {
     pub large_value_threshold: usize,
     pub block_size: usize,
     pub partitioned_bloom: Option<(usize, usize)>,
+    pub direct_io: bool,
 }
 
 impl SegmentWriter {
@@ -88,7 +88,7 @@ impl SegmentWriter {
         out.write_u32(footer.len() as u32);
         out.write_u32(footer_checksum);
         out.write_u32(SEGMENT_FOOTER_MAGIC);
-        fs::write(options.path, out.into_inner())?;
+        write_file_with_policy(options.path, &out.into_inner(), options.direct_io)?;
         let digest = file_digest(options.path)?;
         let min_key = entries
             .first()

@@ -56,7 +56,16 @@ where
         self.current_bytes
     }
 
+    pub fn value_len(&self, key: &K) -> Option<usize> {
+        self.entries.get(key).map(|entry| entry.value.len())
+    }
+
     pub fn insert(&mut self, key: K, value: Bytes) {
+        let _ = self.insert_with_evicted(key, value);
+    }
+
+    pub fn insert_with_evicted(&mut self, key: K, value: Bytes) -> Vec<(K, Bytes)> {
+        let mut evicted = Vec::new();
         self.clock += 1;
         if let Some(old) = self.entries.insert(
             key.clone(),
@@ -69,10 +78,11 @@ where
         }
         self.current_bytes += value.len();
         self.order.push_back((key, self.clock));
-        self.evict();
+        self.evict(&mut evicted);
+        evicted
     }
 
-    fn evict(&mut self) {
+    fn evict(&mut self, evicted: &mut Vec<(K, Bytes)>) {
         while self.current_bytes > self.capacity_bytes {
             let Some((key, generation)) = self.order.pop_front() else {
                 break;
@@ -86,6 +96,7 @@ where
             }
             if let Some(entry) = self.entries.remove(&key) {
                 self.current_bytes = self.current_bytes.saturating_sub(entry.value.len());
+                evicted.push((key, entry.value));
             }
         }
     }

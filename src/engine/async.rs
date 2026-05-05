@@ -1,9 +1,11 @@
 use crate::config::TridentConfig;
-use crate::engine::TridentEngine;
 use crate::errors::{Result, TridentError};
+use crate::maintenance::{MaintenanceRuntimeConfig, MaintenanceStatusSnapshot};
 use crate::transactions::WriteBatch;
 use crate::types::{Key, ReadSnapshot, SequenceNumber, Value};
 use std::path::PathBuf;
+
+use super::TridentEngine;
 
 #[derive(Clone)]
 pub struct AsyncTridentEngine {
@@ -74,7 +76,52 @@ impl AsyncTridentEngine {
             .map_err(|error| TridentError::TaskJoin(error.to_string()))?
     }
 
+    pub async fn scan_prefix_at_snapshot(
+        &self,
+        prefix: Key,
+        limit: usize,
+        snapshot: ReadSnapshot,
+    ) -> Result<Vec<(Key, Value)>> {
+        let engine = self.inner.clone();
+        tokio::task::spawn_blocking(move || {
+            engine.scan_prefix_at_snapshot(&prefix, limit, snapshot)
+        })
+        .await
+        .map_err(|error| TridentError::TaskJoin(error.to_string()))?
+    }
+
     pub fn snapshot(&self) -> ReadSnapshot {
         self.inner.snapshot()
+    }
+
+    pub async fn start_maintenance_runtime(&self, config: MaintenanceRuntimeConfig) -> Result<()> {
+        let engine = self.inner.clone();
+        tokio::task::spawn_blocking(move || engine.start_maintenance_runtime(config))
+            .await
+            .map_err(|error| TridentError::TaskJoin(error.to_string()))?
+    }
+
+    pub async fn stop_maintenance_runtime(&self) -> Result<()> {
+        let engine = self.inner.clone();
+        tokio::task::spawn_blocking(move || {
+            engine.stop_maintenance_runtime()?;
+            engine.join_maintenance_runtime()
+        })
+        .await
+        .map_err(|error| TridentError::TaskJoin(error.to_string()))?
+    }
+
+    pub async fn maintenance_status(&self) -> Result<MaintenanceStatusSnapshot> {
+        let engine = self.inner.clone();
+        tokio::task::spawn_blocking(move || engine.maintenance_status())
+            .await
+            .map_err(|error| TridentError::TaskJoin(error.to_string()))
+    }
+
+    pub async fn retry_maintenance_job(&self, job_id: u64) -> Result<u64> {
+        let engine = self.inner.clone();
+        tokio::task::spawn_blocking(move || engine.retry_maintenance_job(job_id))
+            .await
+            .map_err(|error| TridentError::TaskJoin(error.to_string()))?
     }
 }

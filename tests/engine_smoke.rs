@@ -3,9 +3,10 @@ use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use tempfile::tempdir;
-use trident::manifest::ColumnFamilyDescriptor;
+use trident::manifest::{ColumnFamilyDescriptor, CompactionJobStatus, Manifest};
 use trident::{
-    AsyncTridentEngine, ColumnFamily, TridentConfig, TridentEngine, TridentError, WriteBatch,
+    AsyncTridentEngine, ColumnFamily, JobPriority, MaintenanceRuntimeConfig, RuntimeLaneConfig,
+    TridentConfig, TridentEngine, TridentError, WriteBatch,
 };
 
 #[test]
@@ -562,18 +563,229 @@ fn prefix_scan_and_backup_restore_roundtrip() {
 }
 
 #[test]
+fn prefix_scan_cf_at_snapshot_preserves_visible_versions_across_compaction() {
+    let dir = tempdir().unwrap();
+    let engine = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    engine
+        .create_column_family(ColumnFamilyDescriptor {
+            name: "pages".to_string(),
+            options: trident::manifest::ColumnFamilyOptions {
+                prefix_extractor_len: Some(4),
+                ..trident::manifest::ColumnFamilyOptions::default()
+            },
+            ..ColumnFamilyDescriptor::default()
+        })
+        .unwrap();
+    let pages = ColumnFamily("pages".to_string());
+
+    let mut batch = WriteBatch::new();
+    batch.put(pages.clone(), Bytes::from("doc/a"), Bytes::from("v1"));
+    batch.put(pages.clone(), Bytes::from("doc/b"), Bytes::from("v1"));
+    batch.put(pages.clone(), Bytes::from("misc/z"), Bytes::from("v0"));
+    engine.write_batch(batch).unwrap();
+    engine.flush().unwrap();
+
+    let pinned = engine.pin_snapshot();
+
+    let mut batch = WriteBatch::new();
+    batch.put(pages.clone(), Bytes::from("doc/a"), Bytes::from("v2"));
+    batch.delete(pages.clone(), Bytes::from("doc/b"));
+    batch.put(pages.clone(), Bytes::from("doc/c"), Bytes::from("v2"));
+    engine.write_batch(batch).unwrap();
+    engine.flush().unwrap();
+    engine.compact().unwrap();
+
+    let current = engine.scan_prefix_cf(&pages, b"doc/", 10).unwrap();
+    assert_eq!(
+        current,
+        vec![
+            (Bytes::from("doc/a"), Bytes::from("v2")),
+            (Bytes::from("doc/c"), Bytes::from("v2")),
+        ]
+    );
+
+    let historical = engine
+        .scan_prefix_cf_at_snapshot(&pages, b"doc/", 10, pinned.snapshot())
+        .unwrap();
+    assert_eq!(
+        historical,
+        vec![
+            (Bytes::from("doc/a"), Bytes::from("v1")),
+            (Bytes::from("doc/b"), Bytes::from("v1")),
+        ]
+    );
+}
+
+#[test]
 fn maintenance_queue_runs_priority_jobs() {
     let dir = tempdir().unwrap();
     let engine = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
     engine.put(Bytes::from("m/a"), Bytes::from("1")).unwrap();
-    let low = engine.enqueue_flush_job("low", trident::maintenance::JobPriority::Low);
-    let high = engine.enqueue_compaction_job(
-        trident::CompactionStrategy::Leveled,
-        "high",
-        trident::maintenance::JobPriority::High,
-    );
+    let low = engine
+        .enqueue_flush_job("low", trident::maintenance::JobPriority::Low)
+        .unwrap();
+    let high = engine
+        .enqueue_compaction_job(
+            trident::CompactionStrategy::Leveled,
+            "high",
+            trident::maintenance::JobPriority::High,
+        )
+        .unwrap();
     let first = engine.run_next_maintenance_job().unwrap().unwrap();
     let second = engine.run_next_maintenance_job().unwrap().unwrap();
     assert_eq!(first, high);
     assert_eq!(second, low);
+}
+
+#[test]
+fn maintenance_runtime_requires_at_least_one_worker() {
+    let dir = tempdir().unwrap();
+    let engine = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    let error = engine
+        .start_maintenance_runtime(MaintenanceRuntimeConfig {
+            flush: RuntimeLaneConfig { workers: 0 },
+            compaction: RuntimeLaneConfig { workers: 0 },
+            admin: RuntimeLaneConfig { workers: 0 },
+            idle_sleep_ms: 5,
+        })
+        .unwrap_err();
+    assert!(matches!(error, TridentError::InvalidConfig(_)));
+}
+
+#[test]
+fn maintenance_workers_process_queued_jobs() {
+    let dir = tempdir().unwrap();
+    let engine = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    engine.put(Bytes::from("w/a"), Bytes::from("1")).unwrap();
+    engine
+        .enqueue_flush_job("worker-1", trident::maintenance::JobPriority::Normal)
+        .unwrap();
+    engine
+        .enqueue_compaction_job(
+            trident::CompactionStrategy::Leveled,
+            "worker-2",
+            trident::maintenance::JobPriority::Normal,
+        )
+        .unwrap();
+    let completed = engine.run_maintenance_workers(2, 8).unwrap();
+    assert!(completed >= 2);
+    assert_eq!(
+        engine.stats()["maintenance"]["queue_len"].as_u64().unwrap(),
+        0
+    );
+}
+
+#[test]
+fn cache_partition_percent_limits_cf_cache_usage() {
+    let dir = tempdir().unwrap();
+    let mut config = TridentConfig::new(dir.path());
+    config.cache_size_bytes = 65536;
+    let engine = TridentEngine::open(config).unwrap();
+    engine
+        .create_column_family(ColumnFamilyDescriptor {
+            name: "tiny-cache".to_string(),
+            options: trident::manifest::ColumnFamilyOptions {
+                cache_partition_percent: Some(5),
+                ..trident::manifest::ColumnFamilyOptions::default()
+            },
+            ..ColumnFamilyDescriptor::default()
+        })
+        .unwrap();
+    let mut batch = WriteBatch::new();
+    batch.put(
+        ColumnFamily("tiny-cache".to_string()),
+        Bytes::from("large-value"),
+        Bytes::from(vec![b'v'; 256]),
+    );
+    engine.write_batch(batch).unwrap();
+    engine.flush().unwrap();
+    let _ = engine
+        .get_cf(
+            &ColumnFamily("tiny-cache".to_string()),
+            b"large-value",
+            engine.snapshot(),
+        )
+        .unwrap();
+
+    let stats = engine.stats();
+    let used = stats["cache"]["bytes_by_cf"]["tiny-cache"]
+        .as_u64()
+        .unwrap_or(0);
+    assert_eq!(used, 0);
+}
+
+#[test]
+fn maintenance_runtime_processes_jobs_and_reports_status() {
+    let dir = tempdir().unwrap();
+    let engine = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    engine
+        .put(Bytes::from("runtime/a"), Bytes::from("1"))
+        .unwrap();
+    engine
+        .enqueue_flush_job("runtime", JobPriority::Normal)
+        .unwrap();
+    engine
+        .start_maintenance_runtime(MaintenanceRuntimeConfig {
+            flush: RuntimeLaneConfig { workers: 1 },
+            compaction: RuntimeLaneConfig { workers: 1 },
+            admin: RuntimeLaneConfig { workers: 1 },
+            idle_sleep_ms: 5,
+        })
+        .unwrap();
+
+    for _ in 0..40 {
+        let status = engine.maintenance_status();
+        if status.queued.is_empty() && status.running.is_empty() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+
+    let running_status = engine.maintenance_status();
+    assert!(running_status.runtime.running);
+    assert_eq!(running_status.queued.len(), 0);
+    assert_eq!(running_status.running.len(), 0);
+
+    engine.stop_maintenance_runtime().unwrap();
+    engine.join_maintenance_runtime().unwrap();
+
+    let stopped_status = engine.maintenance_status();
+    assert!(!stopped_status.runtime.running);
+}
+
+#[test]
+fn unfinished_compaction_jobs_are_aborted_on_reopen() {
+    let dir = tempdir().unwrap();
+    let engine = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    engine
+        .put(Bytes::from("reconcile"), Bytes::from("v1"))
+        .unwrap();
+    engine.flush().unwrap();
+    drop(engine);
+
+    let manifest_path = dir.path().join("MANIFEST");
+    let manifest_text = fs::read_to_string(&manifest_path).unwrap();
+    let mut manifest = toml::from_str::<Manifest>(&manifest_text).unwrap();
+    manifest
+        .compaction_jobs
+        .push(trident::manifest::CompactionJobState {
+            id: 999,
+            strategy: trident::CompactionStrategy::Leveled,
+            status: CompactionJobStatus::Running,
+            source_segment_ids: vec![1],
+            output_segment_id: Some(2),
+            created_at_ms: 1,
+            updated_at_ms: 1,
+        });
+    fs::write(&manifest_path, toml::to_string_pretty(&manifest).unwrap()).unwrap();
+
+    let reopened = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    let status = reopened.stats();
+    assert_eq!(
+        status["manifest"]["compaction_jobs"][0]["status"]
+            .as_str()
+            .unwrap(),
+        "Aborted"
+    );
+    assert_eq!(status["manifest"]["segments"].as_array().unwrap().len(), 1);
 }

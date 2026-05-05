@@ -64,6 +64,11 @@ impl Wal {
         Ok(())
     }
 
+    pub fn sync(&mut self) -> Result<()> {
+        self.file.sync_data()?;
+        Ok(())
+    }
+
     pub fn replay_dir(root: &Path) -> Result<Vec<WalRecord>> {
         if !root.exists() {
             return Ok(Vec::new());

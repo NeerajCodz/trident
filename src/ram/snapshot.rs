@@ -59,6 +59,10 @@ impl SnapshotManager {
         self.pinned.lock().values().copied().min()
     }
 
+    pub fn pinned_sequences(&self) -> Vec<SequenceNumber> {
+        self.pinned.lock().values().copied().collect()
+    }
+
     pub fn pinned_count(&self) -> usize {
         self.pinned.lock().len()
     }

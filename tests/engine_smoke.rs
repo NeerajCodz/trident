@@ -2,6 +2,7 @@ use bytes::Bytes;
 use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
+use std::sync::{Arc, Barrier};
 use tempfile::tempdir;
 use trident::manifest::{ColumnFamilyDescriptor, CompactionJobStatus, Manifest};
 use trident::{
@@ -115,6 +116,49 @@ fn compare_and_swap_enforces_expected_value() {
 }
 
 #[test]
+fn compare_and_swap_is_atomic_under_concurrent_writers() {
+    let dir = tempdir().unwrap();
+    let engine = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    engine
+        .put(Bytes::from("cas-race"), Bytes::from("seed"))
+        .unwrap();
+
+    let barrier = Arc::new(Barrier::new(3));
+    let left_engine = engine.clone();
+    let left_barrier = barrier.clone();
+    let left = std::thread::spawn(move || {
+        left_barrier.wait();
+        left_engine.compare_and_swap(Bytes::from("cas-race"), Some(b"seed"), Bytes::from("left"))
+    });
+
+    let right_engine = engine.clone();
+    let right_barrier = barrier.clone();
+    let right = std::thread::spawn(move || {
+        right_barrier.wait();
+        right_engine.compare_and_swap(Bytes::from("cas-race"), Some(b"seed"), Bytes::from("right"))
+    });
+
+    barrier.wait();
+    let left_result = left.join().unwrap();
+    let right_result = right.join().unwrap();
+    let success_count = usize::from(left_result.is_ok()) + usize::from(right_result.is_ok());
+    assert_eq!(success_count, 1, "exactly one CAS should succeed");
+
+    if let Err(error) = left_result {
+        assert!(matches!(error, TridentError::CompareAndSwapFailed));
+    }
+    if let Err(error) = right_result {
+        assert!(matches!(error, TridentError::CompareAndSwapFailed));
+    }
+
+    let final_value = engine.get("cas-race").unwrap().unwrap();
+    assert!(
+        final_value.as_ref() == b"left" || final_value.as_ref() == b"right",
+        "final value must come from the winning CAS"
+    );
+}
+
+#[test]
 fn torn_wal_suffix_is_ignored_during_recovery() {
     let dir = tempdir().unwrap();
     let engine = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
@@ -159,6 +203,46 @@ fn wal_rotates_by_configured_segment_size_and_replays_all_segments() {
                 .unwrap()
                 .unwrap(),
             Bytes::from(vec![b'w'; 1800])
+        );
+    }
+}
+
+#[test]
+fn group_commit_writes_survive_restart_under_concurrency() {
+    let dir = tempdir().unwrap();
+    let mut config = TridentConfig::new(dir.path());
+    config.wal_sync_policy = trident::WalSyncPolicy::GroupCommit;
+    let engine = TridentEngine::open(config.clone()).unwrap();
+
+    let barrier = Arc::new(Barrier::new(5));
+    let mut handles = Vec::new();
+    for i in 0..4 {
+        let engine = engine.clone();
+        let barrier = barrier.clone();
+        handles.push(std::thread::spawn(move || {
+            barrier.wait();
+            engine
+                .put(
+                    Bytes::from(format!("group/{i}")),
+                    Bytes::from(format!("value/{i}")),
+                )
+                .unwrap();
+        }));
+    }
+    barrier.wait();
+    for handle in handles {
+        handle.join().unwrap();
+    }
+    drop(engine);
+
+    let reopened = TridentEngine::open(config).unwrap();
+    for i in 0..4 {
+        assert_eq!(
+            reopened
+                .get(format!("group/{i}").as_bytes())
+                .unwrap()
+                .unwrap(),
+            Bytes::from(format!("value/{i}"))
         );
     }
 }
@@ -313,6 +397,45 @@ fn pinned_snapshot_survives_compaction_until_released() {
             .as_u64()
             .unwrap(),
         0
+    );
+}
+
+#[test]
+fn multiple_pinned_snapshots_survive_compaction_with_distinct_versions() {
+    let dir = tempdir().unwrap();
+    let engine = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    engine
+        .put(Bytes::from("mvcc-many"), Bytes::from("v1"))
+        .unwrap();
+    engine.flush().unwrap();
+    let pinned_v1 = engine.pin_snapshot();
+
+    engine
+        .put(Bytes::from("mvcc-many"), Bytes::from("v2"))
+        .unwrap();
+    engine.flush().unwrap();
+    let pinned_v2 = engine.pin_snapshot();
+
+    engine
+        .put(Bytes::from("mvcc-many"), Bytes::from("v3"))
+        .unwrap();
+    engine.flush().unwrap();
+
+    engine.compact().unwrap();
+    assert_eq!(engine.get("mvcc-many").unwrap().unwrap(), Bytes::from("v3"));
+    assert_eq!(
+        engine
+            .get_cf(&ColumnFamily::default(), b"mvcc-many", pinned_v1.snapshot())
+            .unwrap()
+            .unwrap(),
+        Bytes::from("v1")
+    );
+    assert_eq!(
+        engine
+            .get_cf(&ColumnFamily::default(), b"mvcc-many", pinned_v2.snapshot())
+            .unwrap()
+            .unwrap(),
+        Bytes::from("v2")
     );
 }
 
@@ -712,6 +835,52 @@ fn cache_partition_percent_limits_cf_cache_usage() {
         .as_u64()
         .unwrap_or(0);
     assert_eq!(used, 0);
+}
+
+#[test]
+fn column_family_compression_override_is_honored_for_flush_and_compaction() {
+    let dir = tempdir().unwrap();
+    let mut config = TridentConfig::new(dir.path());
+    config.compression = trident::Compression::Zstd;
+    let engine = TridentEngine::open(config).unwrap();
+    engine
+        .create_column_family(ColumnFamilyDescriptor {
+            name: "lz4-pages".to_string(),
+            options: trident::manifest::ColumnFamilyOptions {
+                compression_override: Some(trident::Compression::Lz4),
+                ..trident::manifest::ColumnFamilyOptions::default()
+            },
+            ..ColumnFamilyDescriptor::default()
+        })
+        .unwrap();
+    let cf = ColumnFamily("lz4-pages".to_string());
+
+    let mut batch = WriteBatch::new();
+    batch.put(cf.clone(), Bytes::from("doc/a"), Bytes::from("v1"));
+    batch.put(cf.clone(), Bytes::from("doc/b"), Bytes::from("v1"));
+    engine.write_batch(batch).unwrap();
+    engine.flush().unwrap();
+
+    let first_segment_path = engine.stats()["manifest"]["segments"][0]["path"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let first_header = fs::read(&first_segment_path).unwrap();
+    assert_eq!(first_header[8], 1, "expected LZ4 compression tag");
+
+    let mut batch = WriteBatch::new();
+    batch.put(cf.clone(), Bytes::from("doc/a"), Bytes::from("v2"));
+    batch.put(cf, Bytes::from("doc/c"), Bytes::from("v2"));
+    engine.write_batch(batch).unwrap();
+    engine.flush().unwrap();
+    engine.compact().unwrap();
+
+    let stats = engine.stats();
+    let segments = stats["manifest"]["segments"].as_array().unwrap();
+    assert_eq!(segments.len(), 1);
+    let compacted_path = segments[0]["path"].as_str().unwrap();
+    let compacted_header = fs::read(compacted_path).unwrap();
+    assert_eq!(compacted_header[8], 1, "expected LZ4 compression tag");
 }
 
 #[test]

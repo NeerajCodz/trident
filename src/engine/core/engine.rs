@@ -30,6 +30,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct TridentEngine {
@@ -115,11 +116,13 @@ impl TridentEngine {
                 config,
                 layout,
                 manifest_store,
+                cas_serialization: Mutex::new(()),
                 manifest: Mutex::new(manifest),
                 wal: Mutex::new(wal),
                 memtable: Mutex::new(memtable),
                 segment_index: Mutex::new(segment_index),
                 snapshots,
+                group_commit: crate::engine::core::state::GroupCommitCoordinator::default(),
                 metrics,
                 accelerator,
             }),
@@ -183,13 +186,20 @@ impl TridentEngine {
         expected: Option<&[u8]>,
         value: impl Into<Value>,
     ) -> Result<SequenceNumber> {
+        let _write_guard = self.inner.cas_serialization.lock();
         let key = key.into();
-        let current = self.get(&key)?;
-        let current_bytes = current.as_ref().map(|value| value.as_ref());
+        let current = self.resolve_value_at_snapshot(
+            &ColumnFamily::default(),
+            &key,
+            self.snapshot().sequence,
+        )?;
+        let current_bytes = current.as_deref();
         if current_bytes != expected {
             return Err(TridentError::CompareAndSwapFailed);
         }
-        self.put(key, value)
+        let mut batch = WriteBatch::new();
+        batch.put_default(key, value);
+        self.write_batch_inner(batch)
     }
 
     pub fn begin_transaction(&self) -> OptimisticTransaction {
@@ -206,6 +216,10 @@ impl TridentEngine {
     }
 
     pub fn write_batch(&self, batch: WriteBatch) -> Result<SequenceNumber> {
+        self.write_batch_inner(batch)
+    }
+
+    fn write_batch_inner(&self, batch: WriteBatch) -> Result<SequenceNumber> {
         let started = std::time::Instant::now();
         if batch.is_empty() {
             return Ok(self.snapshot().sequence);
@@ -220,6 +234,7 @@ impl TridentEngine {
         };
         self.rotate_wal_if_needed(record.encoded_len())?;
         self.inner.wal.lock().append(&record)?;
+        self.maybe_group_commit_wal()?;
         {
             let mut memtable = self.inner.memtable.lock();
             for op in batch.ops() {
@@ -263,6 +278,37 @@ impl TridentEngine {
                 .with_str("outcome", "success"),
         );
         Ok(sequence)
+    }
+
+    fn maybe_group_commit_wal(&self) -> Result<()> {
+        if !matches!(
+            self.inner.config.wal_sync_policy,
+            crate::config::WalSyncPolicy::GroupCommit
+        ) {
+            return Ok(());
+        }
+
+        let mut state = self.inner.group_commit.state.lock();
+        state.enqueued_batch = state.enqueued_batch.saturating_add(1);
+        let target_batch = state.enqueued_batch;
+        if !state.leader_active {
+            state.leader_active = true;
+            drop(state);
+
+            std::thread::sleep(Duration::from_millis(1));
+            self.inner.wal.lock().sync()?;
+
+            let mut state = self.inner.group_commit.state.lock();
+            state.synced_batch = state.enqueued_batch;
+            state.leader_active = false;
+            self.inner.group_commit.ready.notify_all();
+            return Ok(());
+        }
+
+        while state.synced_batch < target_batch {
+            self.inner.group_commit.ready.wait(&mut state);
+        }
+        Ok(())
     }
 
     fn normalize_batch_with_cf_policies(&self, batch: WriteBatch) -> Result<WriteBatch> {
@@ -328,6 +374,7 @@ impl TridentEngine {
     }
 
     fn install_new_active_wal(&self) -> Result<()> {
+        self.inner.wal.lock().sync()?;
         let new_wal_id = {
             let mut manifest = self.inner.manifest.lock();
             let id = manifest.next_wal_id;
@@ -524,12 +571,17 @@ impl TridentEngine {
         let mut flush_limiter =
             IoRateLimiter::new(self.inner.config.flush_rate_limit_bytes_per_sec);
         flush_limiter.consume(segment_entries.len() * 256);
+        let compression = effective_segment_compression(
+            &segment_entries,
+            &cf_options,
+            self.inner.config.compression,
+        );
         let metadata = SegmentWriter::write(
             SegmentWriteOptions {
                 path: &path,
                 id: segment_id,
                 level: 0,
-                compression: self.inner.config.compression,
+                compression,
                 accelerator: self.inner.accelerator.as_ref(),
                 value_log: &mut value_log,
                 large_value_threshold: self.inner.config.large_value_threshold,
@@ -602,7 +654,7 @@ impl TridentEngine {
             self.begin_compaction_job(strategy, source_segment_ids.clone())?;
         self.mark_compaction_job_running(job_id)?;
         let latest_sequence = self.snapshot().sequence;
-        let oldest_pinned = self.inner.snapshots.oldest_pinned_sequence();
+        let pinned_snapshots = self.inner.snapshots.pinned_sequences();
         let mut compacted = Vec::new();
         let cf_options = self.cf_options_map();
         for ((cf, key), versions) in self.inner.segment_index.lock().iter() {
@@ -615,7 +667,7 @@ impl TridentEngine {
                 key,
                 versions,
                 latest_sequence,
-                oldest_pinned,
+                &pinned_snapshots,
                 strategy,
             ));
         }
@@ -638,12 +690,14 @@ impl TridentEngine {
             IoRateLimiter::new(self.inner.config.compaction_rate_limit_bytes_per_sec);
         compaction_limiter.consume(compacted.len() * 256);
         let partitioned_bloom = infer_partitioned_bloom(&compacted, &cf_options);
+        let compression =
+            effective_segment_compression(&compacted, &cf_options, self.inner.config.compression);
         let metadata = SegmentWriter::write(
             SegmentWriteOptions {
                 path: &path,
                 id: segment_id,
                 level: target_level,
-                compression: self.inner.config.compression,
+                compression,
                 accelerator: self.inner.accelerator.as_ref(),
                 value_log: &mut value_log,
                 large_value_threshold: self.inner.config.large_value_threshold,
@@ -740,7 +794,7 @@ impl TridentEngine {
         key: &Key,
         versions: &[VersionedValue],
         latest_sequence: SequenceNumber,
-        oldest_pinned: Option<SequenceNumber>,
+        pinned_snapshots: &[SequenceNumber],
         strategy: crate::config::CompactionStrategy,
     ) -> Vec<crate::segments::block::SegmentEntry> {
         let mut retained = Vec::new();
@@ -756,7 +810,7 @@ impl TridentEngine {
 
         if matches!(strategy, crate::config::CompactionStrategy::Tiered) {
             for version in versions.iter().filter(not_expired) {
-                if let Some(pinned) = oldest_pinned
+                if let Some(pinned) = pinned_snapshots.iter().copied().min()
                     && version.sequence > latest_sequence
                     && version.sequence > pinned
                 {
@@ -791,7 +845,7 @@ impl TridentEngine {
         else {
             return retained;
         };
-        if !matches!(newest.value, StoredValue::Delete) || oldest_pinned.is_some() {
+        if !matches!(newest.value, StoredValue::Delete) || !pinned_snapshots.is_empty() {
             retained.push(crate::segments::block::SegmentEntry {
                 cf: cf.clone(),
                 key: key.clone(),
@@ -799,24 +853,28 @@ impl TridentEngine {
             });
         }
 
-        let Some(oldest_pinned) = oldest_pinned else {
-            return retained;
-        };
-        let Some(pinned_visible) = versions
+        let mut preserved_sequences = retained
             .iter()
-            .rev()
-            .find(|version| version.sequence <= oldest_pinned)
-        else {
-            return retained;
-        };
-        if pinned_visible.sequence != newest.sequence
-            && !matches!(pinned_visible.value, StoredValue::Delete)
-        {
-            retained.push(crate::segments::block::SegmentEntry {
-                cf: cf.clone(),
-                key: key.clone(),
-                version: pinned_visible.clone(),
-            });
+            .map(|entry| entry.version.sequence)
+            .collect::<std::collections::BTreeSet<_>>();
+        for snapshot in pinned_snapshots {
+            let Some(pinned_visible) = versions
+                .iter()
+                .rev()
+                .find(|version| version.sequence <= *snapshot)
+            else {
+                continue;
+            };
+            if matches!(pinned_visible.value, StoredValue::Delete) {
+                continue;
+            }
+            if preserved_sequences.insert(pinned_visible.sequence) {
+                retained.push(crate::segments::block::SegmentEntry {
+                    cf: cf.clone(),
+                    key: key.clone(),
+                    version: pinned_visible.clone(),
+                });
+            }
         }
         retained.sort_by_key(|entry| entry.version.sequence);
         retained
@@ -1214,6 +1272,23 @@ fn infer_partitioned_bloom(
         return None;
     }
     Some((prefix_len, 16))
+}
+
+fn effective_segment_compression(
+    entries: &[crate::segments::block::SegmentEntry],
+    cf_options: &BTreeMap<String, ColumnFamilyOptions>,
+    default: crate::config::Compression,
+) -> crate::config::Compression {
+    let Some(first_cf) = entries.first().map(|entry| entry.cf.0.as_str()) else {
+        return default;
+    };
+    if entries.iter().any(|entry| entry.cf.0 != first_cf) {
+        return default;
+    }
+    cf_options
+        .get(first_cf)
+        .and_then(|options| options.compression_override)
+        .unwrap_or(default)
 }
 
 impl Clone for TridentEngine {

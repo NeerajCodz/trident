@@ -69,3 +69,25 @@ fn large_values_move_to_value_log_and_survive_restart() {
     let reopened = TridentEngine::open(config).unwrap();
     assert_eq!(reopened.get("large").unwrap().unwrap(), value);
 }
+
+#[test]
+fn compaction_collapses_overwrites_and_tombstones() {
+    let dir = tempdir().unwrap();
+    let engine = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    engine.put(Bytes::from("keep"), Bytes::from("old")).unwrap();
+    engine.flush().unwrap();
+    engine.put(Bytes::from("keep"), Bytes::from("new")).unwrap();
+    engine
+        .put(Bytes::from("gone"), Bytes::from("soon"))
+        .unwrap();
+    engine.flush().unwrap();
+    engine.delete(Bytes::from("gone")).unwrap();
+    engine.flush().unwrap();
+
+    assert_eq!(engine.compact().unwrap(), 1);
+    assert_eq!(engine.get("keep").unwrap().unwrap(), Bytes::from("new"));
+    assert_eq!(engine.get("gone").unwrap(), None);
+
+    let stats = engine.stats();
+    assert_eq!(stats["manifest"]["segments"].as_array().unwrap().len(), 1);
+}

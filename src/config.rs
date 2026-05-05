@@ -16,6 +16,8 @@ pub const DEFAULT_L0_STOP_SEGMENTS: usize = 12;
 pub const DEFAULT_SERVICE_NAME: &str = "trident";
 pub const DEFAULT_FLUSH_RATE_LIMIT_BYTES_PER_SEC: usize = 128 * 1024 * 1024;
 pub const DEFAULT_COMPACTION_RATE_LIMIT_BYTES_PER_SEC: usize = 64 * 1024 * 1024;
+pub const DEFAULT_MAINTENANCE_QUEUE_CAPACITY: usize = 4096;
+pub const DEFAULT_MAINTENANCE_RETRY_LIMIT: u8 = 3;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -41,6 +43,8 @@ pub struct TridentConfig {
     pub default_compaction_strategy: CompactionStrategy,
     pub flush_rate_limit_bytes_per_sec: usize,
     pub compaction_rate_limit_bytes_per_sec: usize,
+    pub maintenance_queue_capacity: usize,
+    pub maintenance_retry_limit: u8,
     pub logging: LoggingOptions,
 }
 
@@ -67,6 +71,8 @@ pub struct PersistedEngineConfig {
     pub default_compaction_strategy: CompactionStrategy,
     pub flush_rate_limit_bytes_per_sec: usize,
     pub compaction_rate_limit_bytes_per_sec: usize,
+    pub maintenance_queue_capacity: usize,
+    pub maintenance_retry_limit: u8,
     pub logging: LoggingOptions,
 }
 
@@ -171,6 +177,16 @@ impl TridentConfig {
                 "compaction_rate_limit_bytes_per_sec must be greater than zero".to_string(),
             ));
         }
+        if self.maintenance_queue_capacity == 0 {
+            return Err(TridentError::InvalidConfig(
+                "maintenance_queue_capacity must be greater than zero".to_string(),
+            ));
+        }
+        if self.maintenance_retry_limit == 0 {
+            return Err(TridentError::InvalidConfig(
+                "maintenance_retry_limit must be greater than zero".to_string(),
+            ));
+        }
         Ok(())
     }
 
@@ -196,6 +212,8 @@ impl TridentConfig {
             default_compaction_strategy: self.default_compaction_strategy,
             flush_rate_limit_bytes_per_sec: self.flush_rate_limit_bytes_per_sec,
             compaction_rate_limit_bytes_per_sec: self.compaction_rate_limit_bytes_per_sec,
+            maintenance_queue_capacity: self.maintenance_queue_capacity,
+            maintenance_retry_limit: self.maintenance_retry_limit,
             logging: self.logging.clone(),
         }
     }
@@ -219,7 +237,7 @@ impl Default for TridentConfig {
             wal_segment_size: DEFAULT_WAL_SEGMENT_SIZE,
             wal_sync_policy: WalSyncPolicy::EveryBatch,
             cache_size_bytes: DEFAULT_CACHE_SIZE_BYTES,
-            compression: Compression::Lz4,
+            compression: Compression::Zstd,
             checksum: ChecksumMode::Crc32c,
             background_workers: DEFAULT_BACKGROUND_WORKERS,
             direct_io: false,
@@ -233,6 +251,8 @@ impl Default for TridentConfig {
             default_compaction_strategy: CompactionStrategy::Leveled,
             flush_rate_limit_bytes_per_sec: DEFAULT_FLUSH_RATE_LIMIT_BYTES_PER_SEC,
             compaction_rate_limit_bytes_per_sec: DEFAULT_COMPACTION_RATE_LIMIT_BYTES_PER_SEC,
+            maintenance_queue_capacity: DEFAULT_MAINTENANCE_QUEUE_CAPACITY,
+            maintenance_retry_limit: DEFAULT_MAINTENANCE_RETRY_LIMIT,
             logging: LoggingOptions::default(),
         }
     }

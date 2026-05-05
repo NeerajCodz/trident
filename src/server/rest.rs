@@ -1,4 +1,4 @@
-use crate::maintenance::JobPriority;
+use crate::maintenance::{JobPriority, MaintenanceRuntimeConfig, RuntimeLaneConfig};
 use crate::manifest::ColumnFamilyDescriptor;
 use crate::slog;
 use crate::{ColumnFamily, Result, TridentConfig, TridentEngine, TridentError, WriteBatch};
@@ -48,7 +48,24 @@ pub async fn serve_rest(config: RestServerConfig) -> Result<()> {
         .route("/v1/admin/scan-prefix/{prefix}", get(scan_prefix))
         .route("/v1/admin/maintenance/flush", post(queue_flush))
         .route("/v1/admin/maintenance/compact", post(queue_compact))
+        .route("/v1/admin/maintenance/status", get(maintenance_status))
+        .route(
+            "/v1/admin/maintenance/retry/{job_id}",
+            post(retry_maintenance_job),
+        )
         .route("/v1/admin/maintenance/run-next", post(run_next_maintenance))
+        .route(
+            "/v1/admin/maintenance/run-workers",
+            post(run_maintenance_workers),
+        )
+        .route(
+            "/v1/admin/maintenance/runtime/start",
+            post(start_maintenance_runtime),
+        )
+        .route(
+            "/v1/admin/maintenance/runtime/stop",
+            post(stop_maintenance_runtime),
+        )
         .route("/v1/admin/column-families", get(list_column_families))
         .route(
             "/v1/admin/column-families/{name}",
@@ -280,6 +297,20 @@ struct QueueJobRequest {
     priority: Option<String>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct WorkerRunRequest {
+    workers: Option<usize>,
+    max_jobs_per_worker: Option<usize>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct RuntimeStartRequest {
+    flush_workers: Option<usize>,
+    compaction_workers: Option<usize>,
+    admin_workers: Option<usize>,
+    idle_sleep_ms: Option<u64>,
+}
+
 async fn backup(State(state): State<RestState>, Json(request): Json<BackupRequest>) -> Response {
     let started = std::time::Instant::now();
     let response = match state.engine.backup_to(request.backup_dir) {
@@ -332,11 +363,13 @@ async fn queue_flush(
 ) -> Response {
     let started = std::time::Instant::now();
     let priority = parse_priority(request.priority.as_deref());
-    let id = state.engine.enqueue_flush_job(
+    let response = match state.engine.enqueue_admin_flush_job(
         request.reason.unwrap_or_else(|| "api".to_string()),
         priority,
-    );
-    let response = Json(serde_json::json!({ "job_id": id })).into_response();
+    ) {
+        Ok(id) => Json(serde_json::json!({ "job_id": id })).into_response(),
+        Err(error) => server_error(error),
+    };
     log_request(
         "POST",
         "/v1/admin/maintenance/flush",
@@ -352,15 +385,47 @@ async fn queue_compact(
 ) -> Response {
     let started = std::time::Instant::now();
     let priority = parse_priority(request.priority.as_deref());
-    let id = state.engine.enqueue_compaction_job(
+    let response = match state.engine.enqueue_admin_compaction_job(
         state.engine.effective_config().default_compaction_strategy,
         request.reason.unwrap_or_else(|| "api".to_string()),
         priority,
-    );
-    let response = Json(serde_json::json!({ "job_id": id })).into_response();
+    ) {
+        Ok(id) => Json(serde_json::json!({ "job_id": id })).into_response(),
+        Err(error) => server_error(error),
+    };
     log_request(
         "POST",
         "/v1/admin/maintenance/compact",
+        response.status().as_u16(),
+        started,
+    );
+    response
+}
+
+async fn maintenance_status(State(state): State<RestState>) -> Response {
+    let started = std::time::Instant::now();
+    let response = Json(state.engine.maintenance_status()).into_response();
+    log_request(
+        "GET",
+        "/v1/admin/maintenance/status",
+        response.status().as_u16(),
+        started,
+    );
+    response
+}
+
+async fn retry_maintenance_job(
+    State(state): State<RestState>,
+    Path(job_id): Path<u64>,
+) -> Response {
+    let started = std::time::Instant::now();
+    let response = match state.engine.retry_maintenance_job(job_id) {
+        Ok(new_job_id) => Json(serde_json::json!({ "job_id": new_job_id })).into_response(),
+        Err(error) => server_error(error),
+    };
+    log_request(
+        "POST",
+        "/v1/admin/maintenance/retry/{job_id}",
         response.status().as_u16(),
         started,
     );
@@ -382,44 +447,165 @@ async fn run_next_maintenance(State(state): State<RestState>) -> Response {
     response
 }
 
+async fn start_maintenance_runtime(
+    State(state): State<RestState>,
+    Json(request): Json<RuntimeStartRequest>,
+) -> Response {
+    let started = std::time::Instant::now();
+    let config = MaintenanceRuntimeConfig {
+        flush: RuntimeLaneConfig {
+            workers: request.flush_workers.unwrap_or(1),
+        },
+        compaction: RuntimeLaneConfig {
+            workers: request.compaction_workers.unwrap_or(1),
+        },
+        admin: RuntimeLaneConfig {
+            workers: request.admin_workers.unwrap_or(1),
+        },
+        idle_sleep_ms: request.idle_sleep_ms.unwrap_or(25),
+    };
+    let response = match state.engine.start_maintenance_runtime(config) {
+        Ok(()) => StatusCode::CREATED.into_response(),
+        Err(error) => server_error(error),
+    };
+    log_request(
+        "POST",
+        "/v1/admin/maintenance/runtime/start",
+        response.status().as_u16(),
+        started,
+    );
+    response
+}
+
+async fn stop_maintenance_runtime(State(state): State<RestState>) -> Response {
+    let started = std::time::Instant::now();
+    let response = match state
+        .engine
+        .stop_maintenance_runtime()
+        .and_then(|()| state.engine.join_maintenance_runtime())
+    {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(error) => server_error(error),
+    };
+    log_request(
+        "POST",
+        "/v1/admin/maintenance/runtime/stop",
+        response.status().as_u16(),
+        started,
+    );
+    response
+}
+
+async fn run_maintenance_workers(
+    State(state): State<RestState>,
+    Json(request): Json<WorkerRunRequest>,
+) -> Response {
+    let started = std::time::Instant::now();
+    let response = match state.engine.run_maintenance_workers(
+        request.workers.unwrap_or(2),
+        request.max_jobs_per_worker.unwrap_or(32),
+    ) {
+        Ok(completed) => Json(serde_json::json!({ "completed_jobs": completed })).into_response(),
+        Err(error) => server_error(error),
+    };
+    log_request(
+        "POST",
+        "/v1/admin/maintenance/run-workers",
+        response.status().as_u16(),
+        started,
+    );
+    response
+}
+
 async fn list_column_families(State(state): State<RestState>) -> Response {
-    Json(state.engine.list_column_families()).into_response()
+    let started = std::time::Instant::now();
+    let response = Json(state.engine.list_column_families()).into_response();
+    log_request(
+        "GET",
+        "/v1/admin/column-families",
+        response.status().as_u16(),
+        started,
+    );
+    response
 }
 
 async fn create_column_family(
     State(state): State<RestState>,
     Path(name): Path<String>,
 ) -> Response {
-    match state.engine.create_column_family(ColumnFamilyDescriptor {
+    let started = std::time::Instant::now();
+    let response = match state.engine.create_column_family(ColumnFamilyDescriptor {
         name,
         ..ColumnFamilyDescriptor::default()
     }) {
         Ok(()) => StatusCode::CREATED.into_response(),
         Err(error) => server_error(error),
-    }
+    };
+    log_request(
+        "POST",
+        "/v1/admin/column-families/{name}",
+        response.status().as_u16(),
+        started,
+    );
+    response
 }
 
 async fn drop_column_family(State(state): State<RestState>, Path(name): Path<String>) -> Response {
-    match state.engine.drop_column_family(&name) {
+    let started = std::time::Instant::now();
+    let response = match state.engine.drop_column_family(&name) {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(error) => server_error(error),
-    }
+    };
+    log_request(
+        "DELETE",
+        "/v1/admin/column-families/{name}",
+        response.status().as_u16(),
+        started,
+    );
+    response
 }
 
 fn server_error(error: crate::TridentError) -> Response {
-    let status = match &error {
-        TridentError::UnknownColumnFamily(_) => StatusCode::NOT_FOUND,
-        TridentError::ColumnFamilyExists(_) => StatusCode::CONFLICT,
-        TridentError::CannotDropDefaultColumnFamily => StatusCode::BAD_REQUEST,
-        TridentError::WriteStalled { .. } => StatusCode::TOO_MANY_REQUESTS,
-        TridentError::Corrupt { .. } | TridentError::ConfigMismatch(_) => {
-            StatusCode::UNPROCESSABLE_ENTITY
+    let (status, code, retryable) = match &error {
+        TridentError::UnknownColumnFamily(_) => {
+            (StatusCode::NOT_FOUND, "unknown_column_family", false)
         }
-        _ => StatusCode::INTERNAL_SERVER_ERROR,
+        TridentError::ColumnFamilyExists(_) => {
+            (StatusCode::CONFLICT, "column_family_exists", false)
+        }
+        TridentError::CannotDropDefaultColumnFamily => (
+            StatusCode::BAD_REQUEST,
+            "cannot_drop_default_column_family",
+            false,
+        ),
+        TridentError::WriteStalled { .. } => (StatusCode::TOO_MANY_REQUESTS, "write_stalled", true),
+        TridentError::Corrupt { .. } => (StatusCode::UNPROCESSABLE_ENTITY, "corrupt_data", false),
+        TridentError::ConfigMismatch(_) => {
+            (StatusCode::UNPROCESSABLE_ENTITY, "config_mismatch", false)
+        }
+        TridentError::Io(_) => (StatusCode::SERVICE_UNAVAILABLE, "io_error", true),
+        TridentError::MaintenanceRuntimeRunning => {
+            (StatusCode::CONFLICT, "maintenance_runtime_running", false)
+        }
+        TridentError::MaintenanceRuntimeNotRunning => (
+            StatusCode::CONFLICT,
+            "maintenance_runtime_not_running",
+            false,
+        ),
+        TridentError::MaintenanceJobNotFound(_) => {
+            (StatusCode::NOT_FOUND, "maintenance_job_not_found", false)
+        }
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, "internal_error", false),
     };
     (
         status,
-        Json(serde_json::json!({ "error": error.to_string() })),
+        Json(serde_json::json!({
+            "error": {
+                "code": code,
+                "message": error.to_string(),
+                "retryable": retryable
+            }
+        })),
     )
         .into_response()
 }

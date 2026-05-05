@@ -1,0 +1,37 @@
+use crate::accel::Accelerator;
+use crate::cache::BlockCache;
+use crate::config::TridentConfig;
+use crate::disk::DiskLayout;
+use crate::maintenance::{MaintenanceRuntimeController, MaintenanceScheduler};
+use crate::manifest::Manifest;
+use crate::manifest::ManifestStore;
+use crate::metrics::EngineMetrics;
+use crate::ram::{MemTable, SnapshotManager};
+use crate::types::{ColumnFamily, Key, ValueRef, VersionedValue};
+use crate::wal::Wal;
+use parking_lot::Mutex;
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
+pub(crate) type CacheKey = (String, u64, Vec<u8>);
+pub(crate) type SegmentIndex = BTreeMap<(ColumnFamily, Key), Vec<VersionedValue>>;
+
+pub(crate) struct EngineInner {
+    pub(crate) config: TridentConfig,
+    pub(crate) layout: DiskLayout,
+    pub(crate) manifest_store: ManifestStore,
+    pub(crate) manifest: Mutex<Manifest>,
+    pub(crate) wal: Mutex<Wal>,
+    pub(crate) memtable: Mutex<MemTable>,
+    pub(crate) segment_index: Mutex<SegmentIndex>,
+    pub(crate) cache: Mutex<BlockCache<CacheKey>>,
+    pub(crate) cache_bytes_by_cf: Mutex<BTreeMap<String, usize>>,
+    pub(crate) scheduler: Mutex<MaintenanceScheduler>,
+    pub(crate) runtime: Mutex<MaintenanceRuntimeController>,
+    pub(crate) snapshots: Arc<SnapshotManager>,
+    pub(crate) metrics: EngineMetrics,
+    pub(crate) accelerator: Arc<dyn Accelerator>,
+}
+
+#[allow(dead_code)]
+pub(crate) type ValueReference<'a> = ValueRef<'a>;

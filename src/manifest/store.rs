@@ -1,8 +1,8 @@
 use crate::config::TridentConfig;
 use crate::errors::Result;
+use crate::io::{read_file_with_policy, write_file_with_policy};
 use crate::manifest::model::Manifest;
-use std::fs::{self, File, OpenOptions};
-use std::io::Write;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug)]
@@ -17,26 +17,23 @@ impl ManifestStore {
 
     pub fn load_or_create(&self, config: &TridentConfig) -> Result<Manifest> {
         if self.path.exists() {
-            let bytes = fs::read_to_string(&self.path)?;
-            Ok(toml::from_str(&bytes)?)
+            let (bytes, _) = read_file_with_policy(&self.path, config.direct_io)?;
+            Ok(toml::from_str(&String::from_utf8_lossy(&bytes))?)
         } else {
             let manifest = Manifest::fresh(config);
-            self.save(&manifest)?;
+            self.save_with_policy(&manifest, config.direct_io)?;
             Ok(manifest)
         }
     }
 
     pub fn save(&self, manifest: &Manifest) -> Result<()> {
+        self.save_with_policy(manifest, false)
+    }
+
+    pub fn save_with_policy(&self, manifest: &Manifest, requested_direct_io: bool) -> Result<()> {
         let tmp = self.path.with_extension("tmp");
-        {
-            let mut file = OpenOptions::new()
-                .create(true)
-                .write(true)
-                .truncate(true)
-                .open(&tmp)?;
-            file.write_all(toml::to_string_pretty(manifest)?.as_bytes())?;
-            file.sync_all()?;
-        }
+        let bytes = toml::to_string_pretty(manifest)?;
+        write_file_with_policy(&tmp, bytes.as_bytes(), requested_direct_io)?;
         fs::rename(tmp, &self.path)?;
         sync_parent_dir(&self.path)?;
         Ok(())

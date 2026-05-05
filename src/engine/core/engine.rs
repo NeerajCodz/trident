@@ -1,24 +1,25 @@
+use super::state::EngineInner;
 use crate::accel::{Accelerator, CpuAccelerator};
 use crate::cache::BlockCache;
 use crate::config::{AcceleratorBackend, PersistedEngineConfig, TridentConfig};
 use crate::disk::DiskLayout;
+use crate::engine::compaction::{job_state, planner};
 use crate::errors::{Result, TridentError};
-use crate::io::IoRateLimiter;
-use crate::maintenance::{JobPriority, MaintenanceJob, MaintenanceScheduler, QueuedJob};
+use crate::io::{IoRateLimiter, resolve_io_execution};
+use crate::maintenance::MaintenanceScheduler;
 use crate::manifest::{
-    CheckpointMetadata, ColumnFamilyDescriptor, ColumnFamilyOptions, CompactionJobState,
-    CompactionJobStatus, Manifest, ManifestStore,
+    CheckpointMetadata, ColumnFamilyDescriptor, ColumnFamilyOptions, CompactionJobStatus,
+    ManifestStore,
 };
 use crate::metrics::EngineMetrics;
-use crate::ram::{MemTable, PinnedSnapshot, SnapshotManager};
-use crate::recovery::{GcReport, RecoveryReport, write_checkpoint};
-use crate::segments::bloom::bloom_key;
+use crate::ram::{MemTable, SnapshotManager};
+use crate::recovery::{GcReport, RecoveryReport, write_checkpoint_with_policy};
 use crate::segments::{SegmentReader, SegmentWriteOptions, SegmentWriter};
 use crate::slog;
 use crate::transactions::OptimisticTransaction;
 use crate::transactions::{BatchOp, WriteBatch};
 use crate::types::{
-    ColumnFamily, Key, ReadSnapshot, SequenceNumber, StoredValue, Value, ValueRef, VersionedValue,
+    ColumnFamily, Key, ReadSnapshot, SequenceNumber, StoredValue, Value, VersionedValue,
 };
 use crate::values::ValueLog;
 use crate::wal::{Wal, WalRecord};
@@ -32,22 +33,7 @@ use std::sync::atomic::Ordering;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct TridentEngine {
-    inner: Arc<EngineInner>,
-}
-
-struct EngineInner {
-    config: TridentConfig,
-    layout: DiskLayout,
-    manifest_store: ManifestStore,
-    manifest: Mutex<Manifest>,
-    wal: Mutex<Wal>,
-    memtable: Mutex<MemTable>,
-    segment_index: Mutex<BTreeMap<(ColumnFamily, Key), Vec<crate::types::VersionedValue>>>,
-    cache: Mutex<BlockCache<(u64, Vec<u8>)>>,
-    scheduler: Mutex<MaintenanceScheduler>,
-    snapshots: Arc<SnapshotManager>,
-    metrics: EngineMetrics,
-    accelerator: Arc<dyn Accelerator>,
+    pub(crate) inner: Arc<EngineInner>,
 }
 
 impl TridentEngine {
@@ -78,13 +64,19 @@ impl TridentEngine {
             manifest
                 .column_families
                 .push(ColumnFamilyDescriptor::default());
-            manifest_store.save(&manifest)?;
+            manifest_store.save_with_policy(&manifest, config.direct_io)?;
+        }
+        if job_state::reconcile_unfinished_jobs(&mut manifest) {
+            manifest_store.save_with_policy(&manifest, config.direct_io)?;
         }
         let mut segment_index: BTreeMap<(ColumnFamily, Key), Vec<crate::types::VersionedValue>> =
             BTreeMap::new();
         for segment in &manifest.segments {
-            let entries =
-                SegmentReader::read(std::path::Path::new(&segment.path), accelerator.as_ref())?;
+            let entries = SegmentReader::read(
+                std::path::Path::new(&segment.path),
+                accelerator.as_ref(),
+                config.direct_io,
+            )?;
             for entry in entries {
                 segment_index
                     .entry((entry.cf, entry.key))
@@ -114,7 +106,12 @@ impl TridentEngine {
         let engine = Self {
             inner: Arc::new(EngineInner {
                 cache: Mutex::new(BlockCache::new(config.cache_size_bytes)),
-                scheduler: Mutex::new(MaintenanceScheduler::new()),
+                cache_bytes_by_cf: Mutex::new(BTreeMap::new()),
+                scheduler: Mutex::new(MaintenanceScheduler::new(
+                    config.maintenance_queue_capacity,
+                    config.maintenance_retry_limit,
+                )),
+                runtime: Mutex::new(crate::maintenance::MaintenanceRuntimeController::default()),
                 config,
                 layout,
                 manifest_store,
@@ -244,7 +241,7 @@ impl TridentEngine {
         self.inner.manifest.lock().last_sequence = sequence;
         self.inner
             .manifest_store
-            .save(&self.inner.manifest.lock())?;
+            .save_with_policy(&self.inner.manifest.lock(), self.inner.config.direct_io)?;
         let memtable_bytes = self.inner.memtable.lock().approximate_bytes();
         self.inner
             .metrics
@@ -336,7 +333,9 @@ impl TridentEngine {
             let id = manifest.next_wal_id;
             manifest.active_wal_id = id;
             manifest.next_wal_id += 1;
-            self.inner.manifest_store.save(&manifest)?;
+            self.inner
+                .manifest_store
+                .save_with_policy(&manifest, self.inner.config.direct_io)?;
             id
         };
         let new_wal = Wal::open(
@@ -384,51 +383,6 @@ impl TridentEngine {
             .count()
     }
 
-    pub fn get(&self, key: impl AsRef<[u8]>) -> Result<Option<Value>> {
-        self.get_cf(&ColumnFamily::default(), key.as_ref(), self.snapshot())
-    }
-
-    pub fn get_cf(
-        &self,
-        cf: &ColumnFamily,
-        key: &[u8],
-        snapshot: ReadSnapshot,
-    ) -> Result<Option<Value>> {
-        self.ensure_column_family(cf)?;
-        self.inner.metrics.reads.fetch_add(1, Ordering::Relaxed);
-        if let Some(value) = self.resolve_value_at_snapshot(cf, key, snapshot.sequence)? {
-            return Ok(Some(Bytes::from(value)));
-        }
-        let cache_key = (snapshot.sequence, key.to_vec());
-        if let Some(value) = self.inner.cache.lock().get(&cache_key) {
-            self.inner
-                .metrics
-                .cache_hits
-                .fetch_add(1, Ordering::Relaxed);
-            return Ok(Some(value));
-        }
-        self.inner
-            .metrics
-            .cache_misses
-            .fetch_add(1, Ordering::Relaxed);
-        if !self.segment_filters_may_contain(cf, key) {
-            self.inner
-                .metrics
-                .bloom_negative_hits
-                .fetch_add(1, Ordering::Relaxed);
-            return Ok(None);
-        }
-        let resolved = self.resolve_value_at_snapshot(cf, key, snapshot.sequence)?;
-        Ok(match resolved {
-            Some(value) => {
-                let value = Bytes::from(value);
-                self.inner.cache.lock().insert(cache_key, value.clone());
-                Some(value)
-            }
-            None => None,
-        })
-    }
-
     pub fn create_column_family(&self, mut descriptor: ColumnFamilyDescriptor) -> Result<()> {
         if descriptor.name == ColumnFamily::default().0 {
             return Ok(());
@@ -446,7 +400,9 @@ impl TridentEngine {
             return Err(TridentError::ColumnFamilyExists(descriptor.name));
         }
         manifest.column_families.push(descriptor);
-        self.inner.manifest_store.save(&manifest)
+        self.inner
+            .manifest_store
+            .save_with_policy(&manifest, self.inner.config.direct_io)
     }
 
     pub fn drop_column_family(&self, name: &str) -> Result<()> {
@@ -461,7 +417,9 @@ impl TridentEngine {
         if manifest.column_families.len() == original_len {
             return Err(TridentError::UnknownColumnFamily(name.to_string()));
         }
-        self.inner.manifest_store.save(&manifest)
+        self.inner
+            .manifest_store
+            .save_with_policy(&manifest, self.inner.config.direct_io)
     }
 
     pub fn list_column_families(&self) -> Vec<ColumnFamilyDescriptor> {
@@ -528,7 +486,7 @@ impl TridentEngine {
         Ok(memtable_sequence.max(segment_sequence))
     }
 
-    fn ensure_column_family(&self, cf: &ColumnFamily) -> Result<()> {
+    pub(crate) fn ensure_column_family(&self, cf: &ColumnFamily) -> Result<()> {
         if self
             .inner
             .manifest
@@ -541,143 +499,6 @@ impl TridentEngine {
         } else {
             Err(TridentError::UnknownColumnFamily(cf.0.clone()))
         }
-    }
-
-    pub fn get_ref(&self, key: impl AsRef<[u8]>) -> Result<Option<ValueRef<'static>>> {
-        Ok(self.get(key)?.map(ValueRef::Owned))
-    }
-
-    fn segment_filters_may_contain(&self, cf: &ColumnFamily, key: &[u8]) -> bool {
-        let encoded = bloom_key(&cf.0, key);
-        let prefix_len = self
-            .cf_options_map()
-            .get(&cf.0)
-            .and_then(|options| options.prefix_extractor_len);
-        self.inner.manifest.lock().segments.iter().any(|segment| {
-            if !segment.min_key.is_empty()
-                && (key < segment.min_key.as_slice() || key > segment.max_key.as_slice())
-            {
-                return false;
-            }
-            if let (Some(filter), Some(expected_prefix_len)) =
-                (&segment.partitioned_bloom_filter, prefix_len)
-                && filter.prefix_len == expected_prefix_len
-            {
-                return filter.may_contain(&encoded);
-            }
-            segment.bloom_filter.may_contain(&encoded)
-        })
-    }
-
-    pub fn scan(
-        &self,
-        start: Option<&[u8]>,
-        end: Option<&[u8]>,
-        limit: usize,
-    ) -> Result<Vec<(Key, Value)>> {
-        let snapshot = self.snapshot();
-        let cf = ColumnFamily::default();
-        let mut rows = BTreeMap::new();
-        for (key, value) in self
-            .inner
-            .memtable
-            .lock()
-            .scan(&cf, start, end, snapshot.sequence)
-        {
-            rows.insert(key, value);
-        }
-        for ((entry_cf, key), versions) in self.inner.segment_index.lock().iter() {
-            if entry_cf != &cf {
-                continue;
-            }
-            if start.is_some_and(|start| key.as_ref() < start) {
-                continue;
-            }
-            if end.is_some_and(|end| key.as_ref() >= end) {
-                continue;
-            }
-            if rows.contains_key(key) {
-                continue;
-            }
-            if let Some(value) = self.resolve_versions_chain(&cf, versions, snapshot.sequence)? {
-                rows.insert(key.clone(), Bytes::from(value));
-            }
-        }
-        Ok(rows.into_iter().take(limit).collect())
-    }
-
-    pub fn scan_prefix(&self, prefix: &[u8], limit: usize) -> Result<Vec<(Key, Value)>> {
-        let end = prefix_upper_bound(prefix);
-        self.scan(Some(prefix), end.as_deref(), limit)
-    }
-
-    pub fn snapshot(&self) -> ReadSnapshot {
-        self.inner.snapshots.snapshot()
-    }
-
-    pub fn pin_snapshot(&self) -> PinnedSnapshot {
-        self.inner.snapshots.pin()
-    }
-
-    pub fn enqueue_flush_job(&self, reason: impl Into<String>, priority: JobPriority) -> u64 {
-        self.inner.scheduler.lock().enqueue(QueuedJob {
-            id: 0,
-            priority,
-            job: MaintenanceJob::Flush {
-                reason: reason.into(),
-            },
-        })
-    }
-
-    pub fn enqueue_compaction_job(
-        &self,
-        strategy: crate::config::CompactionStrategy,
-        reason: impl Into<String>,
-        priority: JobPriority,
-    ) -> u64 {
-        self.inner.scheduler.lock().enqueue(QueuedJob {
-            id: 0,
-            priority,
-            job: MaintenanceJob::Compact {
-                strategy,
-                reason: reason.into(),
-            },
-        })
-    }
-
-    pub fn run_next_maintenance_job(&self) -> Result<Option<u64>> {
-        let Some(job) = self.inner.scheduler.lock().dequeue() else {
-            return Ok(None);
-        };
-        let started = std::time::Instant::now();
-        match job.job {
-            MaintenanceJob::Flush { reason } => {
-                let _ = self.flush()?;
-                slog::info(
-                    "maintenance_job_complete",
-                    slog::context()
-                        .with_u64("job_id", job.id)
-                        .with_str("job_type", "flush")
-                        .with_str("reason", reason)
-                        .with_u64("duration_ms", started.elapsed().as_millis() as u64)
-                        .with_str("outcome", "success"),
-                );
-            }
-            MaintenanceJob::Compact { strategy, reason } => {
-                let _ = strategy;
-                let _ = self.compact()?;
-                slog::info(
-                    "maintenance_job_complete",
-                    slog::context()
-                        .with_u64("job_id", job.id)
-                        .with_str("job_type", "compact")
-                        .with_str("reason", reason)
-                        .with_u64("duration_ms", started.elapsed().as_millis() as u64)
-                        .with_str("outcome", "success"),
-                );
-            }
-        }
-        Ok(Some(job.id))
     }
 
     pub fn flush(&self) -> Result<Option<u64>> {
@@ -714,11 +535,16 @@ impl TridentEngine {
                 large_value_threshold: self.inner.config.large_value_threshold,
                 block_size: self.inner.config.block_size,
                 partitioned_bloom,
+                direct_io: self.inner.config.direct_io,
             },
             segment_entries,
         )?;
         let flushed_entries = metadata.entries;
-        let loaded = SegmentReader::read(&path, self.inner.accelerator.as_ref())?;
+        let loaded = SegmentReader::read(
+            &path,
+            self.inner.accelerator.as_ref(),
+            self.inner.config.direct_io,
+        )?;
         {
             let mut segment_index = self.inner.segment_index.lock();
             for entry in loaded {
@@ -731,7 +557,9 @@ impl TridentEngine {
         {
             let mut manifest = self.inner.manifest.lock();
             manifest.segments.push(metadata);
-            self.inner.manifest_store.save(&manifest)?;
+            self.inner
+                .manifest_store
+                .save_with_policy(&manifest, self.inner.config.direct_io)?;
         }
         self.inner.memtable.lock().clear();
         self.inner
@@ -755,9 +583,24 @@ impl TridentEngine {
     }
 
     pub fn compact(&self) -> Result<u64> {
+        self.compact_with_strategy(self.inner.config.default_compaction_strategy)
+    }
+
+    pub fn compact_with_strategy(
+        &self,
+        strategy: crate::config::CompactionStrategy,
+    ) -> Result<u64> {
         let started = std::time::Instant::now();
         self.flush()?;
-        let job_id = self.begin_compaction_job()?;
+        let plan = self.pick_compaction_plan(strategy);
+        let source_segment_ids = plan.source_segment_ids;
+        let target_level = plan.target_level;
+        if source_segment_ids.is_empty() {
+            return Ok(0);
+        }
+        let (job_id, segment_id) =
+            self.begin_compaction_job(strategy, source_segment_ids.clone())?;
+        self.mark_compaction_job_running(job_id)?;
         let latest_sequence = self.snapshot().sequence;
         let oldest_pinned = self.inner.snapshots.oldest_pinned_sequence();
         let mut compacted = Vec::new();
@@ -778,24 +621,17 @@ impl TridentEngine {
         }
         if compacted.is_empty() {
             let mut manifest = self.inner.manifest.lock();
-            manifest.segments.clear();
-            Self::finish_compaction_job(
-                &mut manifest,
-                job_id,
-                None,
-                CompactionJobStatus::Installed,
-            );
-            self.inner.manifest_store.save(&manifest)?;
+            manifest
+                .segments
+                .retain(|segment| !source_segment_ids.contains(&segment.id));
+            job_state::finish_job(&mut manifest, job_id, None, CompactionJobStatus::Installed);
+            self.inner
+                .manifest_store
+                .save_with_policy(&manifest, self.inner.config.direct_io)?;
             self.inner.segment_index.lock().clear();
             return Ok(0);
         }
-        let segment_id = {
-            let mut manifest = self.inner.manifest.lock();
-            let id = manifest.next_segment_id;
-            manifest.next_segment_id += 1;
-            id
-        };
-        let path = self.inner.layout.segment_path(1, segment_id);
+        let path = self.inner.layout.segment_path(target_level, segment_id);
         std::fs::create_dir_all(path.parent().expect("segment path has parent"))?;
         let mut value_log = ValueLog::open(self.inner.layout.value_log_path(segment_id))?;
         let mut compaction_limiter =
@@ -806,18 +642,23 @@ impl TridentEngine {
             SegmentWriteOptions {
                 path: &path,
                 id: segment_id,
-                level: 1,
+                level: target_level,
                 compression: self.inner.config.compression,
                 accelerator: self.inner.accelerator.as_ref(),
                 value_log: &mut value_log,
                 large_value_threshold: self.inner.config.large_value_threshold,
                 block_size: self.inner.config.block_size,
                 partitioned_bloom,
+                direct_io: self.inner.config.direct_io,
             },
             compacted,
         )?;
         let compacted_entries = metadata.entries;
-        let loaded = SegmentReader::read(&path, self.inner.accelerator.as_ref())?;
+        let loaded = SegmentReader::read(
+            &path,
+            self.inner.accelerator.as_ref(),
+            self.inner.config.direct_io,
+        )?;
         let mut rebuilt = BTreeMap::new();
         for entry in loaded {
             rebuilt
@@ -831,66 +672,66 @@ impl TridentEngine {
         }
         {
             let mut manifest = self.inner.manifest.lock();
-            manifest.segments.clear();
+            manifest
+                .segments
+                .retain(|segment| !source_segment_ids.contains(&segment.id));
             manifest.segments.push(metadata);
-            Self::finish_compaction_job(
+            job_state::finish_job(
                 &mut manifest,
                 job_id,
                 Some(segment_id),
                 CompactionJobStatus::Installed,
             );
-            self.inner.manifest_store.save(&manifest)?;
+            self.inner
+                .manifest_store
+                .save_with_policy(&manifest, self.inner.config.direct_io)?;
         }
         slog::info(
             "compact",
             slog::context()
                 .with_u64("new_segments", 1)
                 .with_u64("entries", compacted_entries)
+                .with_u64("target_level", target_level as u64)
                 .with_u64("duration_ms", started.elapsed().as_millis() as u64)
                 .with_str("outcome", "success"),
         );
         Ok(1)
     }
 
-    fn begin_compaction_job(&self) -> Result<u64> {
+    fn begin_compaction_job(
+        &self,
+        strategy: crate::config::CompactionStrategy,
+        source_segment_ids: Vec<u64>,
+    ) -> Result<(u64, u64)> {
         let mut manifest = self.inner.manifest.lock();
-        let now = now_millis();
-        let id = now
-            .saturating_mul(1000)
-            .saturating_add(manifest.next_segment_id);
-        let source_segment_ids = manifest
-            .segments
-            .iter()
-            .map(|segment| segment.id)
-            .collect::<Vec<_>>();
-        manifest.compaction_jobs.push(CompactionJobState {
-            id,
-            strategy: self.inner.config.default_compaction_strategy,
-            status: CompactionJobStatus::Running,
+        let output_segment_id = manifest.next_segment_id;
+        manifest.next_segment_id += 1;
+        let id = job_state::reserve_compaction_job(
+            &mut manifest,
+            strategy,
             source_segment_ids,
-            output_segment_id: None,
-            created_at_ms: now,
-            updated_at_ms: now,
-        });
-        self.inner.manifest_store.save(&manifest)?;
-        Ok(id)
+            output_segment_id,
+        );
+        self.inner
+            .manifest_store
+            .save_with_policy(&manifest, self.inner.config.direct_io)?;
+        Ok((id, output_segment_id))
     }
 
-    fn finish_compaction_job(
-        manifest: &mut Manifest,
-        job_id: u64,
-        output_segment_id: Option<u64>,
-        status: CompactionJobStatus,
-    ) {
-        if let Some(job) = manifest
-            .compaction_jobs
-            .iter_mut()
-            .find(|existing| existing.id == job_id)
-        {
-            job.status = status;
-            job.output_segment_id = output_segment_id;
-            job.updated_at_ms = now_millis();
-        }
+    fn mark_compaction_job_running(&self, job_id: u64) -> Result<()> {
+        let mut manifest = self.inner.manifest.lock();
+        job_state::mark_running(&mut manifest, job_id);
+        self.inner
+            .manifest_store
+            .save_with_policy(&manifest, self.inner.config.direct_io)
+    }
+
+    fn pick_compaction_plan(
+        &self,
+        strategy: crate::config::CompactionStrategy,
+    ) -> planner::CompactionPlan {
+        let manifest = self.inner.manifest.lock();
+        planner::pick_compaction_plan(strategy, &manifest.segments)
     }
 
     fn compaction_retained_versions(
@@ -981,7 +822,7 @@ impl TridentEngine {
         retained
     }
 
-    fn resolve_value_at_snapshot(
+    pub(crate) fn resolve_value_at_snapshot(
         &self,
         cf: &ColumnFamily,
         key: &[u8],
@@ -999,7 +840,7 @@ impl TridentEngine {
         self.resolve_versions_chain(cf, &chain, snapshot)
     }
 
-    fn resolve_versions_chain(
+    pub(crate) fn resolve_versions_chain(
         &self,
         cf: &ColumnFamily,
         chain: &[VersionedValue],
@@ -1037,7 +878,7 @@ impl TridentEngine {
         Ok(state)
     }
 
-    fn cf_options_map(&self) -> BTreeMap<String, ColumnFamilyOptions> {
+    pub(crate) fn cf_options_map(&self) -> BTreeMap<String, ColumnFamilyOptions> {
         self.inner
             .manifest
             .lock()
@@ -1054,12 +895,19 @@ impl TridentEngine {
         let path = self.inner.layout.checkpoint_path(checkpoint_id);
         let checkpoint = {
             let manifest = self.inner.manifest.lock();
-            write_checkpoint(&path, checkpoint_id, &manifest)?
+            write_checkpoint_with_policy(
+                &path,
+                checkpoint_id,
+                &manifest,
+                self.inner.config.direct_io,
+            )?
         };
         {
             let mut manifest = self.inner.manifest.lock();
             manifest.latest_checkpoint = Some(checkpoint.clone());
-            self.inner.manifest_store.save(&manifest)?;
+            self.inner
+                .manifest_store
+                .save_with_policy(&manifest, self.inner.config.direct_io)?;
         }
         self.inner
             .metrics
@@ -1261,6 +1109,7 @@ impl TridentEngine {
     }
 
     pub fn stats(&self) -> serde_json::Value {
+        let maintenance = self.maintenance_status();
         serde_json::json!({
             "accelerator": self.inner.accelerator.name(),
             "effective_config": self.effective_config(),
@@ -1271,6 +1120,23 @@ impl TridentEngine {
                 "pinned_count": self.inner.snapshots.pinned_count(),
                 "oldest_pinned_sequence": self.inner.snapshots.oldest_pinned_sequence(),
             },
+            "maintenance": {
+                "queue_len": maintenance.queued.len(),
+                "failed_jobs": maintenance.failed.len(),
+                "queued": maintenance.queued,
+                "running": maintenance.running,
+                "failed": maintenance.failed,
+                "capacity": maintenance.capacity,
+                "retry_limit": maintenance.retry_limit,
+                "runtime": maintenance.runtime,
+            },
+            "cache": {
+                "bytes_by_cf": self.inner.cache_bytes_by_cf.lock().clone(),
+            },
+            "io": serde_json::json!({
+                "capability": crate::io::detect_io_capability(),
+                "execution": resolve_io_execution(self.inner.config.direct_io),
+            }),
             "data_dir": self.inner.layout.root(),
         })
     }
@@ -1335,21 +1201,6 @@ fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<()> {
     Ok(())
 }
 
-fn prefix_upper_bound(prefix: &[u8]) -> Option<Vec<u8>> {
-    if prefix.is_empty() {
-        return None;
-    }
-    let mut out = prefix.to_vec();
-    for index in (0..out.len()).rev() {
-        if out[index] != u8::MAX {
-            out[index] += 1;
-            out.truncate(index + 1);
-            return Some(out);
-        }
-    }
-    None
-}
-
 fn infer_partitioned_bloom(
     entries: &[crate::segments::block::SegmentEntry],
     cf_options: &BTreeMap<String, ColumnFamilyOptions>,
@@ -1359,6 +1210,9 @@ fn infer_partitioned_bloom(
         return None;
     }
     let prefix_len = cf_options.get(&first_cf)?.prefix_extractor_len?;
+    if prefix_len == 0 || entries.iter().any(|entry| entry.key.len() < prefix_len) {
+        return None;
+    }
     Some((prefix_len, 16))
 }
 

@@ -1,9 +1,10 @@
 use crate::errors::Result;
-use crate::io::file_digest;
+use crate::io::{file_digest, write_file_with_policy};
 use crate::manifest::{CheckpointMetadata, Manifest};
 use serde::{Deserialize, Serialize};
-use std::fs::{self, File, OpenOptions};
-use std::io::Write;
+use std::fs;
+#[cfg(unix)]
+use std::fs::File;
 use std::path::Path;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -14,6 +15,15 @@ pub struct CheckpointFile {
 }
 
 pub fn write_checkpoint(path: &Path, id: u64, manifest: &Manifest) -> Result<CheckpointMetadata> {
+    write_checkpoint_with_policy(path, id, manifest, false)
+}
+
+pub fn write_checkpoint_with_policy(
+    path: &Path,
+    id: u64,
+    manifest: &Manifest,
+    requested_direct_io: bool,
+) -> Result<CheckpointMetadata> {
     let checkpoint = CheckpointFile {
         format_version: manifest.format_version,
         sequence: manifest.last_sequence,
@@ -24,15 +34,8 @@ pub fn write_checkpoint(path: &Path, id: u64, manifest: &Manifest) -> Result<Che
             .collect(),
     };
     let tmp = path.with_extension("tmp");
-    {
-        let mut file = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&tmp)?;
-        file.write_all(&serde_json::to_vec_pretty(&checkpoint)?)?;
-        file.sync_all()?;
-    }
+    let bytes = serde_json::to_vec_pretty(&checkpoint)?;
+    write_file_with_policy(&tmp, &bytes, requested_direct_io)?;
     fs::rename(&tmp, path)?;
     sync_parent_dir(path)?;
     let digest = file_digest(path)?;

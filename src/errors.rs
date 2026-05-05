@@ -36,6 +36,21 @@ pub enum TridentError {
     Server(String),
     #[error("background task failed: {0}")]
     TaskJoin(String),
+    #[error("maintenance runtime is already running")]
+    MaintenanceRuntimeRunning,
+    #[error("maintenance runtime is not running")]
+    MaintenanceRuntimeNotRunning,
+    #[error("maintenance job not found: {0}")]
+    MaintenanceJobNotFound(u64),
 }
 
 pub type Result<T> = std::result::Result<T, TridentError>;
+
+impl TridentError {
+    pub fn is_retryable(&self) -> bool {
+        matches!(
+            self,
+            Self::Io(_) | Self::WriteStalled { .. } | Self::TaskJoin(_) | Self::Server(_)
+        )
+    }
+}

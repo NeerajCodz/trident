@@ -1,5 +1,4 @@
 pub mod accel;
-pub mod async_engine;
 pub mod cache;
 pub mod cli;
 pub mod config;
@@ -20,13 +19,16 @@ pub mod types;
 pub mod values;
 pub mod wal;
 
-pub use async_engine::AsyncTridentEngine;
 pub use config::{
     AcceleratorBackend, ChecksumMode, CompactionStrategy, Compression, LoggingOptions,
     MemTableKind, PersistedEngineConfig, TridentConfig, WalSyncPolicy,
 };
-pub use engine::TridentEngine;
+pub use engine::{AsyncTridentEngine, TridentEngine};
 pub use errors::{Result, TridentError};
+pub use maintenance::{
+    FailedJobRecord, JobPriority, MaintenanceRuntimeConfig, MaintenanceStatusSnapshot,
+    RunningJobRecord, RuntimeLaneConfig, RuntimeStatusSnapshot,
+};
 pub use ram::PinnedSnapshot;
 pub use transactions::{BatchOp, OptimisticTransaction, WriteBatch};
 pub use types::{ColumnFamily, Key, ReadSnapshot, SequenceNumber, TreeId, Value, ValueRef};

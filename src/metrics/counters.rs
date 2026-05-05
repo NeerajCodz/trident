@@ -11,6 +11,10 @@ pub struct EngineMetrics {
     pub cache_hits: AtomicU64,
     pub cache_misses: AtomicU64,
     pub recovered_records: AtomicU64,
+    pub checkpoints: AtomicU64,
+    pub garbage_collections: AtomicU64,
+    pub gc_files_reclaimed: AtomicU64,
+    pub gc_bytes_reclaimed: AtomicU64,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -23,6 +27,10 @@ pub struct EngineMetricsSnapshot {
     pub cache_hits: u64,
     pub cache_misses: u64,
     pub recovered_records: u64,
+    pub checkpoints: u64,
+    pub garbage_collections: u64,
+    pub gc_files_reclaimed: u64,
+    pub gc_bytes_reclaimed: u64,
 }
 
 impl EngineMetrics {
@@ -36,6 +44,10 @@ impl EngineMetrics {
             cache_hits: self.cache_hits.load(Ordering::Relaxed),
             cache_misses: self.cache_misses.load(Ordering::Relaxed),
             recovered_records: self.recovered_records.load(Ordering::Relaxed),
+            checkpoints: self.checkpoints.load(Ordering::Relaxed),
+            garbage_collections: self.garbage_collections.load(Ordering::Relaxed),
+            gc_files_reclaimed: self.gc_files_reclaimed.load(Ordering::Relaxed),
+            gc_bytes_reclaimed: self.gc_bytes_reclaimed.load(Ordering::Relaxed),
         }
     }
 }

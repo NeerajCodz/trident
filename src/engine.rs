@@ -3,10 +3,10 @@ use crate::cache::BlockCache;
 use crate::config::{AcceleratorBackend, TridentConfig};
 use crate::disk::DiskLayout;
 use crate::errors::{Result, TridentError};
-use crate::manifest::{Manifest, ManifestStore};
+use crate::manifest::{CheckpointMetadata, Manifest, ManifestStore};
 use crate::metrics::EngineMetrics;
 use crate::ram::{MemTable, SnapshotManager};
-use crate::recovery::RecoveryReport;
+use crate::recovery::{GcReport, RecoveryReport, write_checkpoint};
 use crate::segments::{SegmentReader, SegmentWriteOptions, SegmentWriter};
 use crate::transactions::{BatchOp, WriteBatch};
 use crate::types::{ColumnFamily, Key, ReadSnapshot, SequenceNumber, StoredValue, Value, ValueRef};
@@ -14,7 +14,8 @@ use crate::values::ValueLog;
 use crate::wal::{Wal, WalRecord};
 use bytes::Bytes;
 use parking_lot::Mutex;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
@@ -395,6 +396,100 @@ impl TridentEngine {
             self.inner.manifest_store.save(&manifest)?;
         }
         Ok(1)
+    }
+
+    pub fn checkpoint(&self) -> Result<CheckpointMetadata> {
+        self.flush()?;
+        let checkpoint_id = self.snapshot().sequence;
+        let path = self.inner.layout.checkpoint_path(checkpoint_id);
+        let checkpoint = {
+            let manifest = self.inner.manifest.lock();
+            write_checkpoint(&path, checkpoint_id, &manifest)?
+        };
+        {
+            let mut manifest = self.inner.manifest.lock();
+            manifest.latest_checkpoint = Some(checkpoint.clone());
+            self.inner.manifest_store.save(&manifest)?;
+        }
+        self.inner
+            .metrics
+            .checkpoints
+            .fetch_add(1, Ordering::Relaxed);
+        Ok(checkpoint)
+    }
+
+    pub fn garbage_collect(&self) -> Result<GcReport> {
+        let manifest = self.inner.manifest.lock().clone();
+        let mut live_files = HashSet::new();
+        for segment in &manifest.segments {
+            live_files.insert(PathBuf::from(&segment.path));
+            live_files.insert(self.inner.layout.value_log_path(segment.id));
+        }
+        if let Some(checkpoint) = &manifest.latest_checkpoint {
+            live_files.insert(PathBuf::from(&checkpoint.path));
+        }
+
+        let mut report = GcReport::default();
+        self.collect_stale_files(
+            &self.inner.layout.segment_root(),
+            "tseg",
+            &live_files,
+            &mut report,
+        )?;
+        self.collect_stale_files(
+            &self.inner.layout.value_root(),
+            "tval",
+            &live_files,
+            &mut report,
+        )?;
+
+        self.inner
+            .metrics
+            .garbage_collections
+            .fetch_add(1, Ordering::Relaxed);
+        self.inner
+            .metrics
+            .gc_files_reclaimed
+            .fetch_add(report.files_reclaimed, Ordering::Relaxed);
+        self.inner
+            .metrics
+            .gc_bytes_reclaimed
+            .fetch_add(report.bytes_reclaimed, Ordering::Relaxed);
+        Ok(report)
+    }
+
+    fn collect_stale_files(
+        &self,
+        root: &Path,
+        extension: &str,
+        live_files: &HashSet<PathBuf>,
+        report: &mut GcReport,
+    ) -> Result<()> {
+        if !root.exists() {
+            return Ok(());
+        }
+        let mut stack = vec![root.to_path_buf()];
+        while let Some(path) = stack.pop() {
+            for entry in std::fs::read_dir(path)? {
+                let entry = entry?;
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                    continue;
+                }
+                if path.extension().and_then(|ext| ext.to_str()) != Some(extension) {
+                    continue;
+                }
+                if live_files.contains(&path) {
+                    continue;
+                }
+                let len = entry.metadata()?.len();
+                std::fs::remove_file(&path)?;
+                report.files_reclaimed += 1;
+                report.bytes_reclaimed += len;
+            }
+        }
+        Ok(())
     }
 
     pub fn recover(&self) -> RecoveryReport {

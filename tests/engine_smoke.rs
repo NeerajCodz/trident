@@ -160,6 +160,24 @@ fn deterministic_operation_stream_matches_btree_oracle() {
     }
 }
 
+#[test]
+fn checkpoint_and_gc_reclaim_obsolete_files_after_compaction() {
+    let dir = tempdir().unwrap();
+    let engine = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    engine.put(Bytes::from("a"), Bytes::from("1")).unwrap();
+    engine.flush().unwrap();
+    engine.put(Bytes::from("a"), Bytes::from("2")).unwrap();
+    engine.flush().unwrap();
+    engine.compact().unwrap();
+
+    let checkpoint = engine.checkpoint().unwrap();
+    assert_eq!(checkpoint.sequence, engine.snapshot().sequence);
+
+    let report = engine.garbage_collect().unwrap();
+    assert!(report.files_reclaimed >= 1);
+    assert!(report.bytes_reclaimed > 0);
+}
+
 #[tokio::test]
 async fn async_engine_wraps_sync_core() {
     let dir = tempdir().unwrap();

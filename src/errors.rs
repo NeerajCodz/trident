@@ -20,6 +20,8 @@ pub enum TridentError {
     CompareAndSwapFailed,
     #[error("unsupported accelerator backend: {0}")]
     UnsupportedAccelerator(String),
+    #[error("server error: {0}")]
+    Server(String),
 }
 
 pub type Result<T> = std::result::Result<T, TridentError>;

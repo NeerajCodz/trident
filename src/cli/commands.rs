@@ -1,6 +1,8 @@
+use crate::server::{RestServerConfig, serve_rest};
 use crate::{Result, TridentConfig, TridentEngine};
 use bytes::Bytes;
 use clap::{Parser, Subcommand};
+use std::net::SocketAddr;
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -41,11 +43,18 @@ enum Command {
         #[arg(long, default_value_t = 10_000)]
         writes: usize,
     },
+    Checkpoint,
+    Gc,
+    Serve {
+        #[arg(long, default_value = "127.0.0.1:7070")]
+        bind: SocketAddr,
+    },
 }
 
 pub fn run() -> Result<()> {
     let cli = Cli::parse();
-    let engine = TridentEngine::open(TridentConfig::new(cli.data_dir))?;
+    let data_dir = cli.data_dir.clone();
+    let engine = TridentEngine::open(TridentConfig::new(&data_dir))?;
     match cli.command {
         Command::Put { key, value } => {
             let sequence = engine.put(Bytes::from(key), Bytes::from(value))?;
@@ -80,6 +89,23 @@ pub fn run() -> Result<()> {
         }
         Command::Recover => {
             println!("{}", serde_json::to_string_pretty(&engine.recover())?);
+        }
+        Command::Checkpoint => {
+            println!("{}", serde_json::to_string_pretty(&engine.checkpoint()?)?);
+        }
+        Command::Gc => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&engine.garbage_collect()?)?
+            );
+        }
+        Command::Serve { bind } => {
+            let config = TridentConfig::new(data_dir);
+            let runtime = tokio::runtime::Runtime::new()?;
+            runtime.block_on(serve_rest(RestServerConfig {
+                engine: config,
+                bind,
+            }))?;
         }
         Command::Inspect => {
             println!("{}", serde_json::to_string_pretty(&engine.stats())?);

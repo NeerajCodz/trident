@@ -46,6 +46,18 @@ impl DiskLayout {
         self.root.join("values").join(format!("{id:020}.tval"))
     }
 
+    pub fn checkpoint_path(&self, id: u64) -> PathBuf {
+        self.root.join("checkpoints").join(format!("{id:020}.chk"))
+    }
+
+    pub fn segment_root(&self) -> PathBuf {
+        self.root.join("segments")
+    }
+
+    pub fn value_root(&self) -> PathBuf {
+        self.root.join("values")
+    }
+
     pub fn tmp_path(&self, name: &str) -> PathBuf {
         self.root.join("tmp").join(name)
     }

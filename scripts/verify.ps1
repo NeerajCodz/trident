@@ -1,3 +1,1 @@
-cargo fmt --check
-cargo clippy --all-targets -- -D warnings
-cargo test
+docker build --target test -t trident:test .

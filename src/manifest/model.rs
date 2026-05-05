@@ -5,6 +5,7 @@ pub struct Manifest {
     pub format_version: u32,
     pub last_sequence: u64,
     pub next_segment_id: u64,
+    pub latest_checkpoint: Option<CheckpointMetadata>,
     pub segments: Vec<SegmentMetadata>,
 }
 
@@ -14,6 +15,7 @@ impl Manifest {
             format_version: 1,
             last_sequence: 0,
             next_segment_id: 1,
+            latest_checkpoint: None,
             segments: Vec::new(),
         }
     }
@@ -27,5 +29,14 @@ pub struct SegmentMetadata {
     pub min_key: Vec<u8>,
     pub max_key: Vec<u8>,
     pub entries: u64,
+    pub file_digest: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CheckpointMetadata {
+    pub id: u64,
+    pub path: String,
+    pub sequence: u64,
+    pub segment_count: u64,
     pub file_digest: String,
 }

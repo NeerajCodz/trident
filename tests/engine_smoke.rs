@@ -560,3 +560,20 @@ fn prefix_scan_and_backup_restore_roundtrip() {
     assert_eq!(restored.get("pfx/b").unwrap().unwrap(), Bytes::from("2"));
     assert_eq!(restored.get("other/c").unwrap().unwrap(), Bytes::from("3"));
 }
+
+#[test]
+fn maintenance_queue_runs_priority_jobs() {
+    let dir = tempdir().unwrap();
+    let engine = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    engine.put(Bytes::from("m/a"), Bytes::from("1")).unwrap();
+    let low = engine.enqueue_flush_job("low", trident::maintenance::JobPriority::Low);
+    let high = engine.enqueue_compaction_job(
+        trident::CompactionStrategy::Leveled,
+        "high",
+        trident::maintenance::JobPriority::High,
+    );
+    let first = engine.run_next_maintenance_job().unwrap().unwrap();
+    let second = engine.run_next_maintenance_job().unwrap().unwrap();
+    assert_eq!(first, high);
+    assert_eq!(second, low);
+}

@@ -7,6 +7,12 @@ pub struct BloomFilter {
     bit_count: u64,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PartitionedBloomFilter {
+    pub partitions: Vec<BloomFilter>,
+    pub prefix_len: usize,
+}
+
 impl BloomFilter {
     pub fn with_expected_items(items: usize) -> Self {
         let bit_count = ((items.max(1) * 12).next_power_of_two()) as u64;
@@ -35,6 +41,41 @@ impl BloomFilter {
             }
         }
         true
+    }
+}
+
+impl PartitionedBloomFilter {
+    pub fn new(prefix_len: usize, expected_items: usize, partition_count: usize) -> Self {
+        let count = partition_count.max(1);
+        let mut partitions = Vec::with_capacity(count);
+        for _ in 0..count {
+            partitions.push(BloomFilter::with_expected_items(expected_items / count + 1));
+        }
+        Self {
+            partitions,
+            prefix_len,
+        }
+    }
+
+    pub fn insert(&mut self, key: &[u8]) {
+        let partition = self.partition_for_key(key);
+        self.partitions[partition].insert(key);
+    }
+
+    pub fn may_contain(&self, key: &[u8]) -> bool {
+        let partition = self.partition_for_key(key);
+        self.partitions[partition].may_contain(key)
+    }
+
+    fn partition_for_key(&self, key: &[u8]) -> usize {
+        if self.partitions.len() == 1 {
+            return 0;
+        }
+        let prefix = &key[..key.len().min(self.prefix_len.max(1))];
+        let hash = blake3::hash(prefix);
+        let mut bytes = [0_u8; 8];
+        bytes.copy_from_slice(&hash.as_bytes()[..8]);
+        (u64::from_le_bytes(bytes) as usize) % self.partitions.len()
     }
 }
 

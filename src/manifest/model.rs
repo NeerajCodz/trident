@@ -29,6 +29,7 @@ pub struct SegmentMetadata {
     pub min_key: Vec<u8>,
     pub max_key: Vec<u8>,
     pub entries: u64,
+    pub bloom_filter: crate::segments::BloomFilter,
     pub file_digest: String,
 }
 

@@ -42,6 +42,9 @@ pub async fn serve_rest(config: RestServerConfig) -> Result<()> {
         .route("/v1/admin/gc", post(gc))
         .route("/v1/admin/stats", get(stats))
         .route("/v1/admin/verify", get(verify))
+        .route("/v1/admin/backup", post(backup))
+        .route("/v1/admin/restore", post(restore))
+        .route("/v1/admin/scan-prefix/{prefix}", get(scan_prefix))
         .route("/v1/admin/column-families", get(list_column_families))
         .route(
             "/v1/admin/column-families/{name}",
@@ -209,6 +212,38 @@ async fn stats(State(state): State<RestState>) -> Response {
 async fn verify(State(state): State<RestState>) -> Response {
     match state.engine.verify() {
         Ok(report) => Json(report).into_response(),
+        Err(error) => server_error(error),
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct BackupRequest {
+    backup_dir: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct RestoreRequest {
+    backup_dir: String,
+    target_dir: String,
+}
+
+async fn backup(State(state): State<RestState>, Json(request): Json<BackupRequest>) -> Response {
+    match state.engine.backup_to(request.backup_dir) {
+        Ok(()) => StatusCode::CREATED.into_response(),
+        Err(error) => server_error(error),
+    }
+}
+
+async fn restore(Json(request): Json<RestoreRequest>) -> Response {
+    match TridentEngine::restore_from_backup(request.backup_dir, request.target_dir) {
+        Ok(()) => StatusCode::CREATED.into_response(),
+        Err(error) => server_error(error),
+    }
+}
+
+async fn scan_prefix(State(state): State<RestState>, Path(prefix): Path<String>) -> Response {
+    match state.engine.scan_prefix(prefix.as_bytes(), 1000) {
+        Ok(rows) => Json(rows).into_response(),
         Err(error) => server_error(error),
     }
 }

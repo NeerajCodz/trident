@@ -22,6 +22,7 @@ use crate::wal::{Wal, WalRecord};
 use bytes::Bytes;
 use parking_lot::Mutex;
 use std::collections::{BTreeMap, HashSet};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -590,6 +591,11 @@ impl TridentEngine {
         Ok(rows.into_iter().take(limit).collect())
     }
 
+    pub fn scan_prefix(&self, prefix: &[u8], limit: usize) -> Result<Vec<(Key, Value)>> {
+        let end = prefix_upper_bound(prefix);
+        self.scan(Some(prefix), end.as_deref(), limit)
+    }
+
     pub fn snapshot(&self) -> ReadSnapshot {
         self.inner.snapshots.snapshot()
     }
@@ -1028,6 +1034,45 @@ impl TridentEngine {
         Ok(report)
     }
 
+    pub fn backup_to(&self, backup_dir: impl AsRef<Path>) -> Result<()> {
+        let started = std::time::Instant::now();
+        self.checkpoint()?;
+        let backup_dir = backup_dir.as_ref();
+        if backup_dir.exists() {
+            fs::remove_dir_all(backup_dir)?;
+        }
+        fs::create_dir_all(backup_dir)?;
+        copy_dir_recursive(self.inner.layout.root(), backup_dir)?;
+        slog::info(
+            "backup_complete",
+            slog::context()
+                .with_str("backup_dir", backup_dir.to_string_lossy().to_string())
+                .with_u64("duration_ms", started.elapsed().as_millis() as u64)
+                .with_str("outcome", "success"),
+        );
+        Ok(())
+    }
+
+    pub fn restore_from_backup(
+        backup_dir: impl AsRef<Path>,
+        target_dir: impl AsRef<Path>,
+    ) -> Result<()> {
+        let backup_dir = backup_dir.as_ref();
+        let target_dir = target_dir.as_ref();
+        if !backup_dir.exists() {
+            return Err(TridentError::InvalidConfig(format!(
+                "backup directory does not exist: {}",
+                backup_dir.to_string_lossy()
+            )));
+        }
+        if target_dir.exists() {
+            fs::remove_dir_all(target_dir)?;
+        }
+        fs::create_dir_all(target_dir)?;
+        copy_dir_recursive(backup_dir, target_dir)?;
+        Ok(())
+    }
+
     pub fn close(&self) -> Result<()> {
         self.flush().map(|_| ())
     }
@@ -1132,6 +1177,36 @@ fn apply_merge_operator(name: &str, current: &[u8], delta: &[u8]) -> Option<Vec<
             Some(merged)
         }
     }
+}
+
+fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<()> {
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let src = entry.path();
+        let dst = destination.join(entry.file_name());
+        if src.is_dir() {
+            fs::create_dir_all(&dst)?;
+            copy_dir_recursive(&src, &dst)?;
+        } else {
+            fs::copy(&src, &dst)?;
+        }
+    }
+    Ok(())
+}
+
+fn prefix_upper_bound(prefix: &[u8]) -> Option<Vec<u8>> {
+    if prefix.is_empty() {
+        return None;
+    }
+    let mut out = prefix.to_vec();
+    for index in (0..out.len()).rev() {
+        if out[index] != u8::MAX {
+            out[index] += 1;
+            out.truncate(index + 1);
+            return Some(out);
+        }
+    }
+    None
 }
 
 impl Clone for TridentEngine {

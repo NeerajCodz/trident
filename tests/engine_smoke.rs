@@ -481,3 +481,82 @@ fn verify_checks_live_segment_digest() {
         TridentError::Corrupt { .. }
     ));
 }
+
+#[test]
+fn ttl_expiration_hides_entries_after_deadline() {
+    let dir = tempdir().unwrap();
+    let mut config = TridentConfig::new(dir.path());
+    config.default_compaction_strategy = trident::CompactionStrategy::Leveled;
+    let engine = TridentEngine::open(config).unwrap();
+    engine
+        .put_with_ttl(Bytes::from("ttl-key"), Bytes::from("ttl-value"), 1)
+        .unwrap();
+    assert_eq!(
+        engine.get("ttl-key").unwrap().unwrap(),
+        Bytes::from("ttl-value")
+    );
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    assert_eq!(engine.get("ttl-key").unwrap(), None);
+}
+
+#[test]
+fn merge_operator_sum_i64_is_applied_deterministically() {
+    let dir = tempdir().unwrap();
+    let engine = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    engine
+        .create_column_family(ColumnFamilyDescriptor {
+            name: "counter".to_string(),
+            options: trident::manifest::ColumnFamilyOptions {
+                merge_operator: Some("sum_i64".to_string()),
+                ..trident::manifest::ColumnFamilyOptions::default()
+            },
+            ..ColumnFamilyDescriptor::default()
+        })
+        .unwrap();
+
+    engine
+        .merge(
+            ColumnFamily("counter".to_string()),
+            Bytes::from("hits"),
+            Bytes::from(1_i64.to_le_bytes().to_vec()),
+        )
+        .unwrap();
+    engine
+        .merge(
+            ColumnFamily("counter".to_string()),
+            Bytes::from("hits"),
+            Bytes::from(2_i64.to_le_bytes().to_vec()),
+        )
+        .unwrap();
+    let value = engine
+        .get_cf(
+            &ColumnFamily("counter".to_string()),
+            b"hits",
+            engine.snapshot(),
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(i64::from_le_bytes(value.as_ref().try_into().unwrap()), 3);
+}
+
+#[test]
+fn prefix_scan_and_backup_restore_roundtrip() {
+    let dir = tempdir().unwrap();
+    let backup_dir = dir.path().join("backup");
+    let restore_dir = dir.path().join("restore");
+    let engine = TridentEngine::open(TridentConfig::new(dir.path().join("live"))).unwrap();
+    engine.put(Bytes::from("pfx/a"), Bytes::from("1")).unwrap();
+    engine.put(Bytes::from("pfx/b"), Bytes::from("2")).unwrap();
+    engine
+        .put(Bytes::from("other/c"), Bytes::from("3"))
+        .unwrap();
+
+    let rows = engine.scan_prefix(b"pfx/", 10).unwrap();
+    assert_eq!(rows.len(), 2);
+    engine.backup_to(&backup_dir).unwrap();
+    TridentEngine::restore_from_backup(&backup_dir, &restore_dir).unwrap();
+    let restored = TridentEngine::open(TridentConfig::new(&restore_dir)).unwrap();
+    assert_eq!(restored.get("pfx/a").unwrap().unwrap(), Bytes::from("1"));
+    assert_eq!(restored.get("pfx/b").unwrap().unwrap(), Bytes::from("2"));
+    assert_eq!(restored.get("other/c").unwrap().unwrap(), Bytes::from("3"));
+}

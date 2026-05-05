@@ -26,6 +26,8 @@ pub enum TridentError {
     ColumnFamilyExists(String),
     #[error("cannot drop the default column family")]
     CannotDropDefaultColumnFamily,
+    #[error("write stalled: {reason}")]
+    WriteStalled { reason: String },
     #[error("unsupported accelerator backend: {0}")]
     UnsupportedAccelerator(String),
     #[error("server error: {0}")]

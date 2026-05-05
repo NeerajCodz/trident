@@ -16,6 +16,8 @@ pub struct TridentConfig {
     pub accelerator: AcceleratorBackend,
     pub large_value_threshold: usize,
     pub memtable_flush_threshold_bytes: usize,
+    pub l0_slowdown_segments: usize,
+    pub l0_stop_segments: usize,
 }
 
 impl TridentConfig {
@@ -47,6 +49,17 @@ impl TridentConfig {
                 "cache_size_bytes must be at least page_size".to_string(),
             ));
         }
+        if self.l0_slowdown_segments == 0 {
+            return Err(TridentError::InvalidConfig(
+                "l0_slowdown_segments must be greater than zero".to_string(),
+            ));
+        }
+        if self.l0_stop_segments < self.l0_slowdown_segments {
+            return Err(TridentError::InvalidConfig(
+                "l0_stop_segments must be greater than or equal to l0_slowdown_segments"
+                    .to_string(),
+            ));
+        }
         Ok(())
     }
 }
@@ -66,6 +79,8 @@ impl Default for TridentConfig {
             accelerator: AcceleratorBackend::Cpu,
             large_value_threshold: 64 * 1024,
             memtable_flush_threshold_bytes: 64 * 1024 * 1024,
+            l0_slowdown_segments: 8,
+            l0_stop_segments: 12,
         }
     }
 }

@@ -153,6 +153,7 @@ impl TridentEngine {
             return Ok(self.snapshot().sequence);
         }
         self.validate_batch_column_families(&batch)?;
+        self.relieve_l0_pressure_before_write()?;
         let sequence = self.inner.snapshots.next_sequence();
         let record = WalRecord {
             sequence,
@@ -194,6 +195,42 @@ impl TridentEngine {
                 .fetch_add(1, Ordering::Relaxed);
         }
         Ok(sequence)
+    }
+
+    fn relieve_l0_pressure_before_write(&self) -> Result<()> {
+        let l0_count = self.l0_segment_count();
+        if l0_count < self.inner.config.l0_slowdown_segments {
+            return Ok(());
+        }
+        self.inner
+            .metrics
+            .write_stalls
+            .fetch_add(1, Ordering::Relaxed);
+        self.compact()?;
+        self.inner
+            .metrics
+            .l0_pressure_compactions
+            .fetch_add(1, Ordering::Relaxed);
+        let l0_count = self.l0_segment_count();
+        if l0_count >= self.inner.config.l0_stop_segments {
+            return Err(TridentError::WriteStalled {
+                reason: format!(
+                    "level-0 segment count {l0_count} exceeds hard stop {}",
+                    self.inner.config.l0_stop_segments
+                ),
+            });
+        }
+        Ok(())
+    }
+
+    fn l0_segment_count(&self) -> usize {
+        self.inner
+            .manifest
+            .lock()
+            .segments
+            .iter()
+            .filter(|segment| segment.level == 0)
+            .count()
     }
 
     pub fn get(&self, key: impl AsRef<[u8]>) -> Result<Option<Value>> {

@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use std::fs::OpenOptions;
 use std::io::Write;
 use tempfile::tempdir;
-use trident::{TridentConfig, TridentEngine, TridentError, WriteBatch};
+use trident::{AsyncTridentEngine, TridentConfig, TridentEngine, TridentError, WriteBatch};
 
 #[test]
 fn put_get_delete_and_recover_from_wal() {
@@ -158,4 +158,21 @@ fn deterministic_operation_stream_matches_btree_oracle() {
             Bytes::from(value)
         );
     }
+}
+
+#[tokio::test]
+async fn async_engine_wraps_sync_core() {
+    let dir = tempdir().unwrap();
+    let engine = AsyncTridentEngine::open(TridentConfig::new(dir.path()))
+        .await
+        .unwrap();
+    engine
+        .put(Bytes::from("async-key"), Bytes::from("async-value"))
+        .await
+        .unwrap();
+    assert_eq!(
+        engine.get(Bytes::from("async-key")).await.unwrap().unwrap(),
+        Bytes::from("async-value")
+    );
+    assert_eq!(engine.flush().await.unwrap(), Some(1));
 }

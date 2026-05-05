@@ -1,5 +1,5 @@
 use crate::manifest::ColumnFamilyDescriptor;
-use crate::{Result, TridentConfig, TridentEngine, TridentError};
+use crate::{ColumnFamily, Result, TridentConfig, TridentEngine, TridentError, WriteBatch};
 use axum::body::Bytes as BodyBytes;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -31,6 +31,10 @@ pub async fn serve_rest(config: RestServerConfig) -> Result<()> {
     let app = Router::new()
         .route("/health", get(health))
         .route("/v1/kv/{key}", get(get_key).put(put_key).delete(delete_key))
+        .route(
+            "/v1/cf/{cf}/kv/{key}",
+            get(get_cf_key).put(put_cf_key).delete(delete_cf_key),
+        )
         .route("/v1/admin/flush", post(flush))
         .route("/v1/admin/compact", post(compact))
         .route("/v1/admin/checkpoint", post(checkpoint))
@@ -81,6 +85,49 @@ async fn put_key(
 
 async fn delete_key(State(state): State<RestState>, Path(key): Path<String>) -> Response {
     match state.engine.delete(BodyBytes::from(key).to_vec()) {
+        Ok(sequence) => Json(serde_json::json!({ "sequence": sequence })).into_response(),
+        Err(error) => server_error(error),
+    }
+}
+
+async fn get_cf_key(
+    State(state): State<RestState>,
+    Path((cf, key)): Path<(String, String)>,
+) -> Response {
+    match state
+        .engine
+        .get_cf(&ColumnFamily(cf), key.as_bytes(), state.engine.snapshot())
+    {
+        Ok(Some(value)) => (StatusCode::OK, value).into_response(),
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(error) => server_error(error),
+    }
+}
+
+async fn put_cf_key(
+    State(state): State<RestState>,
+    Path((cf, key)): Path<(String, String)>,
+    body: BodyBytes,
+) -> Response {
+    let mut batch = WriteBatch::new();
+    batch.put(
+        ColumnFamily(cf),
+        BodyBytes::from(key).to_vec(),
+        body.to_vec(),
+    );
+    match state.engine.write_batch(batch) {
+        Ok(sequence) => Json(serde_json::json!({ "sequence": sequence })).into_response(),
+        Err(error) => server_error(error),
+    }
+}
+
+async fn delete_cf_key(
+    State(state): State<RestState>,
+    Path((cf, key)): Path<(String, String)>,
+) -> Response {
+    let mut batch = WriteBatch::new();
+    batch.delete(ColumnFamily(cf), BodyBytes::from(key).to_vec());
+    match state.engine.write_batch(batch) {
         Ok(sequence) => Json(serde_json::json!({ "sequence": sequence })).into_response(),
         Err(error) => server_error(error),
     }

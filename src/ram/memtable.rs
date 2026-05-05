@@ -6,12 +6,14 @@ use std::collections::BTreeMap;
 #[derive(Clone, Debug, Default)]
 pub struct MemTable {
     entries: BTreeMap<(ColumnFamily, Key), Vec<VersionedValue>>,
+    approximate_bytes: usize,
 }
 
 impl MemTable {
     pub fn apply(&mut self, sequence: SequenceNumber, op: &BatchOp) {
         match op {
             BatchOp::Put { cf, key, value } => {
+                self.approximate_bytes += cf.0.len() + key.len() + value.len() + 32;
                 self.entries
                     .entry((cf.clone(), Bytes::from(key.clone())))
                     .or_default()
@@ -21,6 +23,7 @@ impl MemTable {
                     });
             }
             BatchOp::Delete { cf, key } => {
+                self.approximate_bytes += cf.0.len() + key.len() + 24;
                 self.entries
                     .entry((cf.clone(), Bytes::from(key.clone())))
                     .or_default()
@@ -95,7 +98,12 @@ impl MemTable {
         self.entries.is_empty()
     }
 
+    pub fn approximate_bytes(&self) -> usize {
+        self.approximate_bytes
+    }
+
     pub fn clear(&mut self) {
         self.entries.clear();
+        self.approximate_bytes = 0;
     }
 }

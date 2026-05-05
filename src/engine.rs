@@ -159,6 +159,18 @@ impl TridentEngine {
         self.inner
             .manifest_store
             .save(&self.inner.manifest.lock())?;
+        let memtable_bytes = self.inner.memtable.lock().approximate_bytes();
+        self.inner
+            .metrics
+            .memtable_bytes
+            .store(memtable_bytes as u64, Ordering::Relaxed);
+        if memtable_bytes >= self.inner.config.memtable_flush_threshold_bytes {
+            self.flush()?;
+            self.inner
+                .metrics
+                .automatic_flushes
+                .fetch_add(1, Ordering::Relaxed);
+        }
         Ok(sequence)
     }
 
@@ -323,6 +335,10 @@ impl TridentEngine {
             self.inner.manifest_store.save(&manifest)?;
         }
         self.inner.memtable.lock().clear();
+        self.inner
+            .metrics
+            .memtable_bytes
+            .store(0, Ordering::Relaxed);
         self.inner.wal.lock().truncate()?;
         self.inner
             .metrics

@@ -194,3 +194,24 @@ async fn async_engine_wraps_sync_core() {
     );
     assert_eq!(engine.flush().await.unwrap(), Some(1));
 }
+
+#[test]
+fn memtable_flush_threshold_bounds_ram_growth() {
+    let dir = tempdir().unwrap();
+    let mut config = TridentConfig::new(dir.path());
+    config.memtable_flush_threshold_bytes = 128;
+    let engine = TridentEngine::open(config).unwrap();
+    for i in 0..10 {
+        engine
+            .put(
+                Bytes::from(format!("bounded/{i}")),
+                Bytes::from(vec![b'x'; 64]),
+            )
+            .unwrap();
+    }
+    let stats = engine.stats();
+    assert!(
+        stats["metrics"]["automatic_flushes"].as_u64().unwrap() > 0,
+        "expected automatic flushes once threshold is crossed"
+    );
+}

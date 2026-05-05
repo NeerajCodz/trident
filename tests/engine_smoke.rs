@@ -270,3 +270,31 @@ fn column_families_are_explicit_keyspaces() {
             .any(|cf| cf.name == "pages")
     );
 }
+
+#[test]
+fn optimistic_transaction_detects_write_conflict() {
+    let dir = tempdir().unwrap();
+    let engine = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    engine.put(Bytes::from("txn"), Bytes::from("v1")).unwrap();
+    let mut txn = engine.begin_transaction();
+    assert_eq!(txn.get("txn").unwrap().unwrap(), Bytes::from("v1"));
+    engine.put(Bytes::from("txn"), Bytes::from("v2")).unwrap();
+    txn.put(Bytes::from("txn"), Bytes::from("v3"));
+
+    assert!(matches!(
+        txn.commit().unwrap_err(),
+        TridentError::TransactionConflict { .. }
+    ));
+    assert_eq!(engine.get("txn").unwrap().unwrap(), Bytes::from("v2"));
+}
+
+#[test]
+fn optimistic_transaction_commits_when_keys_do_not_change() {
+    let dir = tempdir().unwrap();
+    let engine = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    let mut txn = engine.begin_transaction();
+    txn.put(Bytes::from("txn-ok"), Bytes::from("v1"));
+    let sequence = txn.commit().unwrap();
+    assert_eq!(sequence, 1);
+    assert_eq!(engine.get("txn-ok").unwrap().unwrap(), Bytes::from("v1"));
+}

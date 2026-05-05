@@ -18,6 +18,8 @@ pub enum TridentError {
     KeyNotFound,
     #[error("compare-and-swap failed")]
     CompareAndSwapFailed,
+    #[error("transaction conflict on key in column family {cf}: {key}")]
+    TransactionConflict { cf: String, key: String },
     #[error("unknown column family: {0}")]
     UnknownColumnFamily(String),
     #[error("column family already exists: {0}")]

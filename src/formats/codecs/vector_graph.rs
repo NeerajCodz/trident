@@ -1,4 +1,6 @@
-use super::{BinaryFormatKind, FormatCodec, decode_envelope, encode_envelope};
+use super::{
+    decode_envelope, encode_envelope, read_f32, read_u32, read_u64, BinaryFormatKind, FormatCodec,
+};
 use crate::errors::Result;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -30,27 +32,20 @@ impl FormatCodec<VectorGraphNode> for VectorGraphCodec {
 
     fn decode(bytes: &[u8]) -> Result<VectorGraphNode> {
         let payload = decode_envelope(bytes, Self::KIND, Self::VERSION)?;
-        let record_id = u64::from_le_bytes(payload[0..8].try_into().unwrap());
-        let mut offset = 8;
-        let vector_len =
-            u32::from_le_bytes(payload[offset..offset + 4].try_into().unwrap()) as usize;
-        offset += 4;
+        let mut offset = 0;
+        let record_id = read_u64(payload, &mut offset, "vector graph record id")?;
+        let vector_len = read_u32(payload, &mut offset, "vector length")? as usize;
         let mut vector = Vec::with_capacity(vector_len);
         for _ in 0..vector_len {
-            vector.push(f32::from_le_bytes(
-                payload[offset..offset + 4].try_into().unwrap(),
-            ));
-            offset += 4;
+            vector.push(read_f32(payload, &mut offset, "vector component")?);
         }
-        let neighbor_len =
-            u32::from_le_bytes(payload[offset..offset + 4].try_into().unwrap()) as usize;
-        offset += 4;
+        let neighbor_len = read_u32(payload, &mut offset, "neighbor count")? as usize;
         let mut neighbors = Vec::with_capacity(neighbor_len);
         for _ in 0..neighbor_len {
-            neighbors.push(u64::from_le_bytes(
-                payload[offset..offset + 8].try_into().unwrap(),
-            ));
-            offset += 8;
+            neighbors.push(read_u64(payload, &mut offset, "neighbor record id")?);
+        }
+        if offset != payload.len() {
+            return Err(super::corrupt("vector graph trailing bytes"));
         }
         Ok(VectorGraphNode {
             record_id,

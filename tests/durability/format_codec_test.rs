@@ -1,4 +1,3 @@
-use trident::formats::codecs::FormatCodec;
 use trident::formats::codecs::bitmap::{BitmapBlock, BitmapCodec};
 use trident::formats::codecs::checkpoint::{CheckpointBlock, CheckpointCodec};
 use trident::formats::codecs::columnar::{ColumnarBlock, ColumnarBlockCodec};
@@ -6,6 +5,7 @@ use trident::formats::codecs::filter::{FilterBlock, FilterCodec};
 use trident::formats::codecs::postings::{PostingsCodec, PostingsList};
 use trident::formats::codecs::row::{RowRecord, RowRecordCodec};
 use trident::formats::codecs::vector_graph::{VectorGraphCodec, VectorGraphNode};
+use trident::formats::codecs::FormatCodec;
 
 #[test]
 fn versioned_format_codecs_roundtrip() {
@@ -83,4 +83,32 @@ fn format_version_mismatch_is_rejected() {
     let mut encoded = RowRecordCodec::encode(&row).unwrap();
     encoded[6] = 2;
     assert!(RowRecordCodec::decode(&encoded).is_err());
+}
+
+#[test]
+fn malformed_format_payloads_return_errors() {
+    for bytes in [
+        b"".as_slice(),
+        b"TFMT".as_slice(),
+        b"TFMT\x01\x00\x01".as_slice(),
+    ] {
+        assert!(RowRecordCodec::decode(bytes).is_err());
+    }
+
+    let mut encoded = ColumnarBlockCodec::encode(&ColumnarBlock {
+        column_id: 1,
+        values: vec![b"abc".to_vec()],
+    })
+    .unwrap();
+    encoded.pop();
+    assert!(ColumnarBlockCodec::decode(&encoded).is_err());
+
+    let mut vector = VectorGraphCodec::encode(&VectorGraphNode {
+        record_id: 1,
+        vector: vec![1.0, 2.0],
+        neighbors: vec![2, 3],
+    })
+    .unwrap();
+    vector.pop();
+    assert!(VectorGraphCodec::decode(&vector).is_err());
 }

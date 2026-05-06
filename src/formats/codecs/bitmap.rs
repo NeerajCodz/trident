@@ -1,4 +1,4 @@
-use super::{BinaryFormatKind, FormatCodec, decode_envelope, encode_envelope};
+use super::{decode_envelope, encode_envelope, read_u32, read_u64, BinaryFormatKind, FormatCodec};
 use crate::errors::Result;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -23,10 +23,14 @@ impl FormatCodec<BitmapBlock> for BitmapCodec {
 
     fn decode(bytes: &[u8]) -> Result<BitmapBlock> {
         let payload = decode_envelope(bytes, Self::KIND, Self::VERSION)?;
-        let count = u32::from_le_bytes(payload[0..4].try_into().unwrap()) as usize;
+        let mut offset = 0;
+        let count = read_u32(payload, &mut offset, "bitmap word count")? as usize;
         let mut bits = Vec::with_capacity(count);
-        for chunk in payload[4..].chunks_exact(8).take(count) {
-            bits.push(u64::from_le_bytes(chunk.try_into().unwrap()));
+        for _ in 0..count {
+            bits.push(read_u64(payload, &mut offset, "bitmap word")?);
+        }
+        if offset != payload.len() {
+            return Err(super::corrupt("bitmap trailing bytes"));
         }
         Ok(BitmapBlock { bits })
     }

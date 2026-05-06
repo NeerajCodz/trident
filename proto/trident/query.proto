@@ -8,14 +8,20 @@ service Vector { rpc Search(VectorRequest) returns (VectorResponse); }
 service Search { rpc Query(SearchRequest) returns (SearchResponse); }
 service Benchmark { rpc Run(BenchmarkRequest) returns (BenchmarkResponse); }
 
-message SqlRequest { string statement = 1; }
+message RequestContext {
+  string request_id = 1;
+  string tenant_id = 2;
+  string trace_id = 3;
+}
+
+message SqlRequest { RequestContext context = 1; string statement = 2; }
 message SqlResponse { repeated bytes rows = 1; }
-message GraphRequest { uint64 start_record_id = 1; uint32 max_depth = 2; }
+message GraphRequest { RequestContext context = 1; uint64 start_record_id = 2; uint32 max_depth = 3; }
 message GraphResponse { repeated uint64 record_ids = 1; }
-message VectorRequest { repeated float vector = 1; uint32 limit = 2; bytes filter = 3; }
+message VectorRequest { RequestContext context = 1; repeated float vector = 2; uint32 limit = 3; bytes filter = 4; }
 message VectorHit { uint64 record_id = 1; float score = 2; }
 message VectorResponse { repeated VectorHit hits = 1; }
-message SearchRequest { repeated string terms = 1; repeated string fields = 2; uint32 limit = 3; }
+message SearchRequest { RequestContext context = 1; repeated string terms = 2; repeated string fields = 3; uint32 limit = 4; }
 message SearchResponse { repeated uint64 record_ids = 1; }
-message BenchmarkRequest { string suite = 1; }
+message BenchmarkRequest { RequestContext context = 1; string suite = 2; }
 message BenchmarkResponse { string artifact_path = 1; }

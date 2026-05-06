@@ -1,4 +1,6 @@
-use super::{BinaryFormatKind, FormatCodec, decode_envelope, encode_envelope};
+use super::{
+    decode_envelope, encode_envelope, read_bytes, read_u32, BinaryFormatKind, FormatCodec,
+};
 use crate::errors::Result;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -26,15 +28,16 @@ impl FormatCodec<ColumnarBlock> for ColumnarBlockCodec {
 
     fn decode(bytes: &[u8]) -> Result<ColumnarBlock> {
         let payload = decode_envelope(bytes, Self::KIND, Self::VERSION)?;
-        let column_id = u32::from_le_bytes(payload[0..4].try_into().unwrap());
-        let count = u32::from_le_bytes(payload[4..8].try_into().unwrap()) as usize;
-        let mut offset = 8;
+        let mut offset = 0;
+        let column_id = read_u32(payload, &mut offset, "column id")?;
+        let count = read_u32(payload, &mut offset, "column value count")? as usize;
         let mut values = Vec::with_capacity(count);
         for _ in 0..count {
-            let len = u32::from_le_bytes(payload[offset..offset + 4].try_into().unwrap()) as usize;
-            offset += 4;
-            values.push(payload[offset..offset + len].to_vec());
-            offset += len;
+            let len = read_u32(payload, &mut offset, "column value length")? as usize;
+            values.push(read_bytes(payload, &mut offset, len, "column value")?);
+        }
+        if offset != payload.len() {
+            return Err(super::corrupt("columnar trailing bytes"));
         }
         Ok(ColumnarBlock { column_id, values })
     }

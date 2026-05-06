@@ -62,3 +62,44 @@ pub fn corrupt(reason: impl Into<String>) -> TridentError {
         reason: reason.into(),
     }
 }
+
+pub(crate) fn read_u32(payload: &[u8], offset: &mut usize, label: &str) -> Result<u32> {
+    let end = offset.saturating_add(4);
+    let bytes = payload
+        .get(*offset..end)
+        .ok_or_else(|| corrupt(format!("{label} is truncated")))?;
+    *offset = end;
+    Ok(u32::from_le_bytes(bytes.try_into().unwrap()))
+}
+
+pub(crate) fn read_u64(payload: &[u8], offset: &mut usize, label: &str) -> Result<u64> {
+    let end = offset.saturating_add(8);
+    let bytes = payload
+        .get(*offset..end)
+        .ok_or_else(|| corrupt(format!("{label} is truncated")))?;
+    *offset = end;
+    Ok(u64::from_le_bytes(bytes.try_into().unwrap()))
+}
+
+pub(crate) fn read_f32(payload: &[u8], offset: &mut usize, label: &str) -> Result<f32> {
+    let end = offset.saturating_add(4);
+    let bytes = payload
+        .get(*offset..end)
+        .ok_or_else(|| corrupt(format!("{label} is truncated")))?;
+    *offset = end;
+    Ok(f32::from_le_bytes(bytes.try_into().unwrap()))
+}
+
+pub(crate) fn read_bytes(
+    payload: &[u8],
+    offset: &mut usize,
+    len: usize,
+    label: &str,
+) -> Result<Vec<u8>> {
+    let end = offset.saturating_add(len);
+    let bytes = payload
+        .get(*offset..end)
+        .ok_or_else(|| corrupt(format!("{label} is truncated")))?;
+    *offset = end;
+    Ok(bytes.to_vec())
+}

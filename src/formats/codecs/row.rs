@@ -1,4 +1,6 @@
-use super::{BinaryFormatKind, FormatCodec, decode_envelope, encode_envelope};
+use super::{
+    decode_envelope, encode_envelope, read_bytes, read_u32, read_u64, BinaryFormatKind, FormatCodec,
+};
 use crate::errors::Result;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -23,17 +25,13 @@ impl FormatCodec<RowRecord> for RowRecordCodec {
 
     fn decode(bytes: &[u8]) -> Result<RowRecord> {
         let payload = decode_envelope(bytes, Self::KIND, Self::VERSION)?;
-        if payload.len() < 12 {
-            return Err(super::corrupt("row payload too short"));
-        }
-        let record_id = u64::from_le_bytes(payload[0..8].try_into().unwrap());
-        let len = u32::from_le_bytes(payload[8..12].try_into().unwrap()) as usize;
-        if payload.len() != 12 + len {
+        let mut offset = 0;
+        let record_id = read_u64(payload, &mut offset, "row record_id")?;
+        let len = read_u32(payload, &mut offset, "row length")? as usize;
+        let bytes = read_bytes(payload, &mut offset, len, "row bytes")?;
+        if offset != payload.len() {
             return Err(super::corrupt("row length mismatch"));
         }
-        Ok(RowRecord {
-            record_id,
-            bytes: payload[12..].to_vec(),
-        })
+        Ok(RowRecord { record_id, bytes })
     }
 }

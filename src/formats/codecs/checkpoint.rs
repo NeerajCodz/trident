@@ -1,4 +1,4 @@
-use super::{BinaryFormatKind, FormatCodec, decode_envelope, encode_envelope};
+use super::{decode_envelope, encode_envelope, read_u64, BinaryFormatKind, FormatCodec};
 use crate::errors::Result;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -22,9 +22,15 @@ impl FormatCodec<CheckpointBlock> for CheckpointCodec {
 
     fn decode(bytes: &[u8]) -> Result<CheckpointBlock> {
         let payload = decode_envelope(bytes, Self::KIND, Self::VERSION)?;
+        let mut offset = 0;
+        let sequence = read_u64(payload, &mut offset, "checkpoint sequence")?;
+        let manifest_epoch = read_u64(payload, &mut offset, "checkpoint manifest epoch")?;
+        if offset != payload.len() {
+            return Err(super::corrupt("checkpoint trailing bytes"));
+        }
         Ok(CheckpointBlock {
-            sequence: u64::from_le_bytes(payload[0..8].try_into().unwrap()),
-            manifest_epoch: u64::from_le_bytes(payload[8..16].try_into().unwrap()),
+            sequence,
+            manifest_epoch,
         })
     }
 }

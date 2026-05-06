@@ -1,4 +1,6 @@
-use super::{BinaryFormatKind, FormatCodec, decode_envelope, encode_envelope};
+use super::{
+    decode_envelope, encode_envelope, read_bytes, read_u32, read_u64, BinaryFormatKind, FormatCodec,
+};
 use crate::errors::Result;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -26,17 +28,16 @@ impl FormatCodec<PostingsList> for PostingsCodec {
 
     fn decode(bytes: &[u8]) -> Result<PostingsList> {
         let payload = decode_envelope(bytes, Self::KIND, Self::VERSION)?;
-        let term_len = u32::from_le_bytes(payload[0..4].try_into().unwrap()) as usize;
-        let term = payload[4..4 + term_len].to_vec();
-        let mut offset = 4 + term_len;
-        let count = u32::from_le_bytes(payload[offset..offset + 4].try_into().unwrap()) as usize;
-        offset += 4;
+        let mut offset = 0;
+        let term_len = read_u32(payload, &mut offset, "postings term length")? as usize;
+        let term = read_bytes(payload, &mut offset, term_len, "postings term")?;
+        let count = read_u32(payload, &mut offset, "postings count")? as usize;
         let mut record_ids = Vec::with_capacity(count);
         for _ in 0..count {
-            record_ids.push(u64::from_le_bytes(
-                payload[offset..offset + 8].try_into().unwrap(),
-            ));
-            offset += 8;
+            record_ids.push(read_u64(payload, &mut offset, "postings record id")?);
+        }
+        if offset != payload.len() {
+            return Err(super::corrupt("postings trailing bytes"));
         }
         Ok(PostingsList { term, record_ids })
     }

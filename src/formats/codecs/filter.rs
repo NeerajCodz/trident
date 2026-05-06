@@ -1,4 +1,6 @@
-use super::{BinaryFormatKind, FormatCodec, decode_envelope, encode_envelope};
+use super::{
+    decode_envelope, encode_envelope, read_bytes, read_u32, BinaryFormatKind, FormatCodec,
+};
 use crate::errors::Result;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -26,17 +28,19 @@ impl FormatCodec<FilterBlock> for FilterCodec {
     fn decode(bytes: &[u8]) -> Result<FilterBlock> {
         let payload = decode_envelope(bytes, Self::KIND, Self::VERSION)?;
         let mut offset = 0;
-        let mut next = || {
-            let len = u32::from_le_bytes(payload[offset..offset + 4].try_into().unwrap()) as usize;
-            offset += 4;
-            let item = payload[offset..offset + len].to_vec();
-            offset += len;
-            item
-        };
+        let min_len = read_u32(payload, &mut offset, "filter min key length")? as usize;
+        let min_key = read_bytes(payload, &mut offset, min_len, "filter min key")?;
+        let max_len = read_u32(payload, &mut offset, "filter max key length")? as usize;
+        let max_key = read_bytes(payload, &mut offset, max_len, "filter max key")?;
+        let bloom_len = read_u32(payload, &mut offset, "filter bloom length")? as usize;
+        let bloom_bits = read_bytes(payload, &mut offset, bloom_len, "filter bloom bits")?;
+        if offset != payload.len() {
+            return Err(super::corrupt("filter trailing bytes"));
+        }
         Ok(FilterBlock {
-            min_key: next(),
-            max_key: next(),
-            bloom_bits: next(),
+            min_key,
+            max_key,
+            bloom_bits,
         })
     }
 }

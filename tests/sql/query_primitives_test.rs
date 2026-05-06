@@ -1,12 +1,14 @@
 use trident::kernel::ExecutionMode;
 use trident::query::sql::SqlIndexSpec;
-use trident::query::{QueryModel, plan};
+use trident::query::{plan, QueryModel};
 
 #[test]
 fn sql_plans_to_btree_specialized_path() {
     let query_plan = plan(QueryModel::Sql);
     assert_eq!(query_plan.execution_mode, ExecutionMode::Specialized);
     assert_eq!(query_plan.index, "btree");
+    assert_eq!(query_plan.cursor, "relational_scan");
+    assert!(query_plan.cost_units > 0);
 }
 
 #[test]

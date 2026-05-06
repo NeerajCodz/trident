@@ -14,15 +14,21 @@ service Kv {
   rpc Delete(KvDeleteRequest) returns (KvDeleteResponse);
 }
 
+message RequestContext {
+  string request_id = 1;
+  string tenant_id = 2;
+  string trace_id = 3;
+}
+
 message HealthRequest {}
 message HealthResponse { string status = 1; }
 message FlushRequest {}
 message FlushResponse { bool ok = 1; }
 message CompactRequest { string target = 1; }
 message CompactResponse { bool ok = 1; }
-message KvGetRequest { bytes key = 1; }
+message KvGetRequest { RequestContext context = 1; bytes key = 2; }
 message KvGetResponse { bytes value = 1; bool found = 2; }
-message KvPutRequest { bytes key = 1; bytes value = 2; }
+message KvPutRequest { RequestContext context = 1; bytes key = 2; bytes value = 3; }
 message KvPutResponse { uint64 record_id = 1; }
-message KvDeleteRequest { bytes key = 1; }
+message KvDeleteRequest { RequestContext context = 1; bytes key = 2; }
 message KvDeleteResponse { bool ok = 1; }

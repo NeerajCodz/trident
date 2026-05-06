@@ -48,6 +48,11 @@ path = "benches/concurrency/scaling_bench.rs"
 harness = false
 
 [[bench]]
+name = "concurrency_hybrid_query"
+path = "benches/concurrency/hybrid_query_bench.rs"
+harness = false
+
+[[bench]]
 name = "accel_cpu_crc"
 path = "benches/accel/cpu_crc_bench.rs"
 harness = false
@@ -98,6 +103,10 @@ path = "tests/kv/storage_engine_test.rs"
 [[test]]
 name = "integration_scenario"
 path = "tests/integration/scenario_test.rs"
+
+[[test]]
+name = "integration_hybrid_query"
+path = "tests/integration/hybrid_query_test.rs"
 
 [[test]]
 name = "concurrency_benchmark_integration"

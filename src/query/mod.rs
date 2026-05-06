@@ -1,6 +1,7 @@
 use crate::kernel::ExecutionMode;
 
 pub mod graph;
+pub mod hybrid;
 pub mod kv;
 pub mod search;
 pub mod sql;

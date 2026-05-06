@@ -1,0 +1,578 @@
+use super::manifest::{StorageManifest, StorageManifestStore};
+use super::wal::{StorageWal, StorageWalEntry, StorageWalOperation};
+use super::{CompactionStats, RecordId, RecordStore};
+use crate::cache::BlockCache;
+use crate::errors::{Result, TridentError};
+use crate::index::{IndexPlugin, IndexStats};
+use bytes::Bytes;
+use std::collections::{BTreeSet, HashMap};
+use std::path::{Path, PathBuf};
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub enum CacheEntryType {
+    PrimaryData,
+    IndexBlock(String),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub struct CacheBlockKey {
+    pub ty: CacheEntryType,
+    pub block_id: u64,
+}
+
+pub struct UnifiedBlockCache {
+    inner: BlockCache<CacheBlockKey>,
+}
+
+impl UnifiedBlockCache {
+    pub fn new(capacity_bytes: usize) -> Self {
+        Self {
+            inner: BlockCache::new(capacity_bytes),
+        }
+    }
+
+    pub fn put_primary(&mut self, block_id: u64, value: Bytes) {
+        self.inner.insert(
+            CacheBlockKey {
+                ty: CacheEntryType::PrimaryData,
+                block_id,
+            },
+            value,
+        );
+    }
+
+    pub fn get_primary(&mut self, block_id: u64) -> Option<Bytes> {
+        self.inner.get(&CacheBlockKey {
+            ty: CacheEntryType::PrimaryData,
+            block_id,
+        })
+    }
+
+    pub fn put_index(&mut self, index: &str, block_id: u64, value: Bytes) {
+        self.inner.insert(
+            CacheBlockKey {
+                ty: CacheEntryType::IndexBlock(index.to_string()),
+                block_id,
+            },
+            value,
+        );
+    }
+
+    pub fn get_index(&mut self, index: &str, block_id: u64) -> Option<Bytes> {
+        self.inner.get(&CacheBlockKey {
+            ty: CacheEntryType::IndexBlock(index.to_string()),
+            block_id,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IndexInsert {
+    pub index_type: String,
+    pub key: Vec<u8>,
+}
+
+impl IndexInsert {
+    pub fn new(index_type: impl Into<String>, key: impl Into<Vec<u8>>) -> Self {
+        Self {
+            index_type: index_type.into(),
+            key: key.into(),
+        }
+    }
+}
+
+pub struct StorageEngine {
+    root: PathBuf,
+    store: RecordStore,
+    wal: StorageWal,
+    manifest_store: StorageManifestStore,
+    manifest: StorageManifest,
+    indexes: HashMap<String, Box<dyn IndexPlugin>>,
+    pending_replay: Vec<StorageWalEntry>,
+    cache: UnifiedBlockCache,
+    compaction_budget_bytes: u64,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct IndexCompactionReport {
+    pub index_type: String,
+    pub before: IndexStats,
+    pub after: IndexStats,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct SuggestedMaintenanceJob {
+    pub index_type: String,
+    pub reason: String,
+    pub estimated_versions_pruned: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MaintenanceCycleOptions {
+    pub stale_version_threshold: u64,
+    pub max_jobs: usize,
+}
+
+impl Default for MaintenanceCycleOptions {
+    fn default() -> Self {
+        Self {
+            stale_version_threshold: 1,
+            max_jobs: usize::MAX,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct MaintenanceCycleReport {
+    pub suggested: Vec<SuggestedMaintenanceJob>,
+    pub executed: Vec<IndexCompactionReport>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct StorageEngineStats {
+    pub manifest_version: u64,
+    pub last_sequence: u64,
+    pub live_records: u64,
+    pub live_bytes: u64,
+    pub pending_wal_replay: usize,
+    pub compaction_budget_bytes: u64,
+    pub index_stats: HashMap<String, IndexStats>,
+    pub index_compaction_runs: HashMap<String, u64>,
+    pub last_compacted_at_sequence: HashMap<String, u64>,
+    pub maintenance_cycles_run: u64,
+    pub last_maintenance_at_sequence: Option<u64>,
+}
+
+impl StorageEngine {
+    const PRIMARY_DIR: &'static str = "primary";
+    const INDEX_DIR: &'static str = "indexes";
+    const WAL_DIR: &'static str = "wal";
+    const WAL_FILE: &'static str = "storage.wal";
+    const MANIFEST_FILE: &'static str = "MANIFEST.store";
+
+    pub fn open(root: impl Into<PathBuf>, cache_capacity_bytes: usize) -> Result<Self> {
+        let root = root.into();
+        std::fs::create_dir_all(&root)?;
+        std::fs::create_dir_all(root.join(Self::INDEX_DIR))?;
+        std::fs::create_dir_all(root.join(Self::WAL_DIR))?;
+
+        let store = RecordStore::open(root.join(Self::PRIMARY_DIR))?;
+        let wal_path = root.join(Self::WAL_DIR).join(Self::WAL_FILE);
+        let wal = StorageWal::open(&wal_path)?;
+        let replay_entries = StorageWal::replay(&wal_path)?;
+
+        let manifest_store = StorageManifestStore::new(root.join(Self::MANIFEST_FILE));
+        let mut manifest = manifest_store.load_or_create()?;
+        manifest.last_sequence = replay_entries
+            .iter()
+            .map(|entry| entry.sequence)
+            .max()
+            .unwrap_or(manifest.last_sequence);
+        let pending_replay = replay_entries
+            .into_iter()
+            .filter(|entry| entry.index_type != "primary")
+            .collect();
+
+        Ok(Self {
+            root,
+            store,
+            wal,
+            manifest_store,
+            manifest,
+            indexes: HashMap::new(),
+            pending_replay,
+            cache: UnifiedBlockCache::new(cache_capacity_bytes),
+            compaction_budget_bytes: 0,
+        })
+    }
+
+    pub fn register_index(
+        &mut self,
+        index_type: impl Into<String>,
+        namespace: impl Into<String>,
+        plugin: Box<dyn IndexPlugin>,
+    ) -> Result<()> {
+        let index_type = index_type.into();
+        self.indexes.insert(index_type.clone(), plugin);
+        self.manifest
+            .plugin_namespaces
+            .insert(index_type.clone(), namespace.into());
+        self.replay_for_index(&index_type)?;
+        Ok(())
+    }
+
+    pub fn put(&mut self, value: &[u8], index_inserts: &[IndexInsert]) -> Result<RecordId> {
+        self.ensure_indexes_exist(
+            index_inserts
+                .iter()
+                .map(|insert| insert.index_type.as_str()),
+        )?;
+        let rid = self.store.put(value)?;
+        let mut entries = Vec::with_capacity(index_inserts.len() + 1);
+        entries.push(StorageWalEntry {
+            sequence: 0,
+            index_type: "primary".to_string(),
+            key: Vec::new(),
+            rid: Some(rid),
+            operation: StorageWalOperation::Put,
+        });
+        for insert in index_inserts {
+            entries.push(StorageWalEntry {
+                sequence: 0,
+                index_type: insert.index_type.clone(),
+                key: insert.key.clone(),
+                rid: Some(rid),
+                operation: StorageWalOperation::Put,
+            });
+        }
+        self.append_wal_batch(&mut entries)?;
+        for (insert, wal_entry) in index_inserts.iter().zip(entries.iter().skip(1)) {
+            let plugin = self.indexes.get_mut(&insert.index_type).ok_or_else(|| {
+                TridentError::InvalidConfig(format!("unknown index plugin: {}", insert.index_type))
+            })?;
+            plugin.put_with_sequence(&insert.key, rid, wal_entry.sequence)?;
+        }
+        self.store.flush()?;
+        Ok(rid)
+    }
+
+    pub fn put_index(&mut self, index_type: &str, key: &[u8], rid: RecordId) -> Result<()> {
+        self.ensure_indexes_exist(std::iter::once(index_type))?;
+        let sequence = self.append_wal(StorageWalEntry {
+            sequence: 0,
+            index_type: index_type.to_string(),
+            key: key.to_vec(),
+            rid: Some(rid),
+            operation: StorageWalOperation::Put,
+        })?;
+        let plugin = self.indexes.get_mut(index_type).ok_or_else(|| {
+            TridentError::InvalidConfig(format!("unknown index plugin: {index_type}"))
+        })?;
+        plugin.put_with_sequence(key, rid, sequence)
+    }
+
+    pub fn delete_index(&mut self, index_type: &str, key: &[u8]) -> Result<()> {
+        self.ensure_indexes_exist(std::iter::once(index_type))?;
+        let sequence = self.append_wal(StorageWalEntry {
+            sequence: 0,
+            index_type: index_type.to_string(),
+            key: key.to_vec(),
+            rid: None,
+            operation: StorageWalOperation::Delete,
+        })?;
+        let plugin = self.indexes.get_mut(index_type).ok_or_else(|| {
+            TridentError::InvalidConfig(format!("unknown index plugin: {index_type}"))
+        })?;
+        plugin.delete_with_sequence(key, sequence)
+    }
+
+    pub fn lookup_rid(&self, index_type: &str, key: &[u8]) -> Result<Option<RecordId>> {
+        let plugin = self.indexes.get(index_type).ok_or_else(|| {
+            TridentError::InvalidConfig(format!("unknown index plugin: {index_type}"))
+        })?;
+        Ok(plugin.get(key))
+    }
+
+    pub fn lookup_rid_at(
+        &self,
+        index_type: &str,
+        key: &[u8],
+        sequence: u64,
+    ) -> Result<Option<RecordId>> {
+        let plugin = self.indexes.get(index_type).ok_or_else(|| {
+            TridentError::InvalidConfig(format!("unknown index plugin: {index_type}"))
+        })?;
+        Ok(plugin.get_at(key, sequence))
+    }
+
+    pub fn fetch(&self, rid: RecordId) -> Result<Vec<u8>> {
+        self.store.get(rid)
+    }
+
+    pub fn fetch_by_index(&self, index_type: &str, key: &[u8]) -> Result<Option<Vec<u8>>> {
+        let rid = self.lookup_rid(index_type, key)?;
+        rid.map(|id| self.fetch(id)).transpose()
+    }
+
+    pub fn delete_record(&mut self, rid: RecordId) -> Result<()> {
+        self.store.delete(rid)
+    }
+
+    pub fn compact_primary(&mut self) -> Result<CompactionStats> {
+        let stats = self.store.compact()?;
+        self.bump_manifest_version()?;
+        Ok(stats)
+    }
+
+    pub fn compact_indexes(&mut self) -> Result<Vec<IndexCompactionReport>> {
+        let mut names: Vec<String> = self.indexes.keys().cloned().collect();
+        names.sort();
+        self.compact_selected_indexes(&names)
+    }
+
+    pub fn compact_selected_indexes(
+        &mut self,
+        index_types: &[impl AsRef<str>],
+    ) -> Result<Vec<IndexCompactionReport>> {
+        let mut reports = Vec::with_capacity(index_types.len());
+        for index_name in index_types {
+            let index_name = index_name.as_ref();
+            let plugin = self.indexes.get_mut(index_name).ok_or_else(|| {
+                TridentError::InvalidConfig(format!("unknown index plugin: {index_name}"))
+            })?;
+            let before = plugin.stats();
+            plugin.compact()?;
+            plugin.flush()?;
+            let after = plugin.stats();
+            reports.push(IndexCompactionReport {
+                index_type: index_name.to_string(),
+                before,
+                after,
+            });
+            *self
+                .manifest
+                .index_compaction_runs
+                .entry(index_name.to_string())
+                .or_insert(0) += 1;
+            self.manifest
+                .last_compacted_at_sequence
+                .insert(index_name.to_string(), self.manifest.last_sequence);
+        }
+        self.bump_manifest_version()?;
+        Ok(reports)
+    }
+
+    pub fn flush(&mut self) -> Result<()> {
+        self.store.flush()?;
+        for plugin in self.indexes.values_mut() {
+            plugin.flush()?;
+        }
+        self.bump_manifest_version()
+    }
+
+    pub fn cache_mut(&mut self) -> &mut UnifiedBlockCache {
+        &mut self.cache
+    }
+
+    pub fn live_count(&self) -> u64 {
+        self.store.live_count()
+    }
+
+    pub fn live_bytes(&self) -> u64 {
+        self.store.live_bytes()
+    }
+
+    pub fn manifest(&self) -> &StorageManifest {
+        &self.manifest
+    }
+
+    pub fn set_compaction_budget_bytes(&mut self, bytes: u64) {
+        self.compaction_budget_bytes = bytes;
+    }
+
+    pub fn compaction_budget_bytes(&self) -> u64 {
+        self.compaction_budget_bytes
+    }
+
+    pub fn stats(&self) -> StorageEngineStats {
+        let index_stats = self
+            .indexes
+            .iter()
+            .map(|(name, plugin)| (name.clone(), plugin.stats()))
+            .collect();
+        StorageEngineStats {
+            manifest_version: self.manifest.version,
+            last_sequence: self.manifest.last_sequence,
+            live_records: self.live_count(),
+            live_bytes: self.live_bytes(),
+            pending_wal_replay: self.pending_replay.len(),
+            compaction_budget_bytes: self.compaction_budget_bytes,
+            index_stats,
+            index_compaction_runs: self.manifest.index_compaction_runs.clone(),
+            last_compacted_at_sequence: self.manifest.last_compacted_at_sequence.clone(),
+            maintenance_cycles_run: self.manifest.maintenance_cycles_run,
+            last_maintenance_at_sequence: self.manifest.last_maintenance_at_sequence,
+        }
+    }
+
+    /// Heuristic maintenance planner for plugin-local compaction.
+    ///
+    /// A suggestion is emitted when a plugin has significantly more total
+    /// versions than live keys.
+    pub fn suggest_index_compactions(
+        &self,
+        stale_version_threshold: u64,
+    ) -> Vec<SuggestedMaintenanceJob> {
+        let mut suggestions: Vec<SuggestedMaintenanceJob> = self
+            .indexes
+            .iter()
+            .filter_map(|(index_type, plugin)| {
+                let stats = plugin.stats();
+                let stale_versions = stats.versions.saturating_sub(stats.live_keys);
+                (stale_versions >= stale_version_threshold).then(|| SuggestedMaintenanceJob {
+                    index_type: index_type.clone(),
+                    reason: format!(
+                        "stale version pressure: stale_versions={stale_versions}, live_keys={}",
+                        stats.live_keys
+                    ),
+                    estimated_versions_pruned: stale_versions,
+                })
+            })
+            .collect();
+        suggestions.sort_by(|a, b| {
+            b.estimated_versions_pruned
+                .cmp(&a.estimated_versions_pruned)
+                .then_with(|| a.index_type.cmp(&b.index_type))
+        });
+        suggestions
+    }
+
+    /// Run one maintenance cycle: suggest stale-version compactions, execute
+    /// them, and return both plan and execution output.
+    pub fn run_maintenance_cycle(
+        &mut self,
+        stale_version_threshold: u64,
+    ) -> Result<MaintenanceCycleReport> {
+        self.run_maintenance_cycle_with_options(MaintenanceCycleOptions {
+            stale_version_threshold,
+            ..MaintenanceCycleOptions::default()
+        })
+    }
+
+    pub fn run_maintenance_cycle_with_options(
+        &mut self,
+        options: MaintenanceCycleOptions,
+    ) -> Result<MaintenanceCycleReport> {
+        let suggested = self.suggest_index_compactions(options.stale_version_threshold);
+        let selected: Vec<String> = suggested
+            .iter()
+            .take(options.max_jobs)
+            .map(|job| job.index_type.clone())
+            .collect();
+        let executed = if selected.is_empty() {
+            Vec::new()
+        } else {
+            self.compact_selected_indexes(&selected)?
+        };
+        self.manifest.maintenance_cycles_run += 1;
+        self.manifest.last_maintenance_at_sequence = Some(self.manifest.last_sequence);
+        self.save_manifest_metadata_only()?;
+        Ok(MaintenanceCycleReport {
+            suggested,
+            executed,
+        })
+    }
+
+    pub fn wal_path(&self) -> &Path {
+        self.wal.path()
+    }
+
+    fn append_wal(&mut self, mut entry: StorageWalEntry) -> Result<u64> {
+        self.manifest.last_sequence += 1;
+        entry.sequence = self.manifest.last_sequence;
+        self.wal.append(&entry)?;
+        Ok(entry.sequence)
+    }
+
+    fn append_wal_batch(&mut self, entries: &mut [StorageWalEntry]) -> Result<()> {
+        for entry in entries.iter_mut() {
+            self.manifest.last_sequence += 1;
+            entry.sequence = self.manifest.last_sequence;
+        }
+        self.wal.append_batch(entries)
+    }
+
+    fn save_manifest_metadata_only(&mut self) -> Result<()> {
+        self.manifest.version += 1;
+        self.manifest_store.save(&self.manifest)
+    }
+
+    fn replay_for_index(&mut self, index_type: &str) -> Result<()> {
+        let Some(plugin) = self.indexes.get_mut(index_type) else {
+            return Ok(());
+        };
+        let mut remaining = Vec::with_capacity(self.pending_replay.len());
+        for entry in self.pending_replay.drain(..) {
+            if entry.index_type != index_type {
+                remaining.push(entry);
+                continue;
+            }
+            match entry.operation {
+                StorageWalOperation::Put => {
+                    if let Some(rid) = entry.rid {
+                        plugin.put_with_sequence(&entry.key, rid, entry.sequence)?;
+                    }
+                }
+                StorageWalOperation::Delete => {
+                    plugin.delete_with_sequence(&entry.key, entry.sequence)?
+                }
+            }
+        }
+        self.pending_replay = remaining;
+        Ok(())
+    }
+
+    fn ensure_indexes_exist<'a>(
+        &self,
+        index_types: impl IntoIterator<Item = &'a str>,
+    ) -> Result<()> {
+        for index_type in index_types {
+            if !self.indexes.contains_key(index_type) {
+                return Err(TridentError::InvalidConfig(format!(
+                    "unknown index plugin: {index_type}"
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    fn bump_manifest_version(&mut self) -> Result<()> {
+        self.manifest.version += 1;
+        self.manifest.primary_segments =
+            list_files_with_ext(&self.root.join(Self::PRIMARY_DIR).join("records"), "trec")?;
+
+        let index_dir = self.root.join(Self::INDEX_DIR);
+        let all_index_files = list_all_files(&index_dir)?;
+        self.manifest.index_files.clear();
+        for index_type in self.indexes.keys() {
+            let prefix = format!("{index_type}.");
+            let files = all_index_files
+                .iter()
+                .filter(|path| path.starts_with(&prefix))
+                .cloned()
+                .collect();
+            self.manifest.index_files.insert(index_type.clone(), files);
+        }
+        self.manifest_store.save(&self.manifest)
+    }
+}
+
+fn list_files_with_ext(dir: &Path, ext: &str) -> Result<Vec<String>> {
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+    let mut out = BTreeSet::new();
+    for entry in std::fs::read_dir(dir)? {
+        let path = entry?.path();
+        if path.extension().and_then(|e| e.to_str()) == Some(ext)
+            && let Some(name) = path.file_name().and_then(|n| n.to_str())
+        {
+            out.insert(name.to_string());
+        }
+    }
+    Ok(out.into_iter().collect())
+}
+
+fn list_all_files(dir: &Path) -> Result<Vec<String>> {
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+    let mut out = BTreeSet::new();
+    for entry in std::fs::read_dir(dir)? {
+        let path = entry?.path();
+        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+            out.insert(name.to_string());
+        }
+    }
+    Ok(out.into_iter().collect())
+}

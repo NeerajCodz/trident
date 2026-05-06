@@ -2,6 +2,26 @@
 
 Trident is the standalone Rust storage engine core for Poiesis. It is not a wrapper over an existing database and it does not carry Poiesis entity semantics inside the core. Trident owns durable value IO, RAM-resident value IO, WAL recovery, immutable segments, cache behavior, snapshots, compaction hooks, and acceleration boundaries.
 
+## Storage-Layer Contract: No Duplicate Value Bytes
+
+Trident now exposes a storage-only orchestration API (`store::StorageEngine`) built around a single primary `RecordStore`. Raw bytes are written once, assigned a stable logical `RecordId`, and every index overlay stores only `key -> RecordId` pointers.
+
+- **Primary store**: append-only record segments with logical RID indirection (`RecordId -> physical location`) for compaction-safe address stability.
+- **Single storage WAL**: one WAL stream for all index updates using entries shaped as `[sequence | index_type | key | RID | operation]`.
+- **Grouped WAL commit path**: multi-index writes are appended as one WAL batch with monotonic contiguous sequence assignment.
+- **Pointer-only plugins**: LSM, B-tree, adjacency, and vector indexes reference records by RID and never duplicate value bytes.
+- **Snapshot-capable indexes**: LSM and B-tree plugins keep sequence-aware key histories and support point lookups at a specific sequence.
+- **LSM metadata surfaces**: LSM plugin materializes persisted bloom-like key membership and fence bounds (`min/max`) for scan planning.
+- **B-tree page metadata**: B-tree plugin materializes persisted deterministic page metadata (page id, key count, min/max key).
+- **Graph/vector durability hooks**: adjacency supports atomic bidirectional edge insertion; vector index supports persisted snapshot/reload mode.
+- **Manifest + cache primitives**: storage manifest versioning tracks segment/index files and plugin namespaces; unified block cache keys are tagged by data/index type.
+- **Observability surface**: `StorageEngine::stats()` reports live-record totals, WAL replay backlog, compaction budget, and per-index key/version counters.
+- **Maintenance hints**: `StorageEngine::suggest_index_compactions(...)` proposes index compaction jobs from stale-version pressure.
+- **End-to-end maintenance cycle**: `StorageEngine::run_maintenance_cycle(...)` performs suggest+execute compaction workflow and returns execution reports.
+- **Deterministic maintenance planning**: compaction suggestions are stable-ordered by prune potential, with `run_maintenance_cycle_with_options(...)` supporting max-jobs caps per cycle.
+- **Strict write validation**: storage writes pre-validate all referenced index plugins before data/WAL mutation to avoid partial invalid state.
+- **Snapshot index lookups**: `StorageEngine::lookup_rid_at(...)` exposes sequence-consistent index reads for recovery/snapshot semantics.
+
 ## Core Shape
 
 - Sync-first engine API with async wrappers.

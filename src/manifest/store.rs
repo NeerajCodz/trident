@@ -5,6 +5,9 @@ use crate::manifest::model::Manifest;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[cfg(unix)]
+use std::fs::File;
+
 #[derive(Clone, Debug)]
 pub struct ManifestStore {
     path: PathBuf,

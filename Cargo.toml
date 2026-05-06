@@ -63,6 +63,11 @@ path = "benches/accel/gpu_crc_bench.rs"
 harness = false
 
 [[bench]]
+name = "accel_columnar_filter"
+path = "benches/accel/columnar_filter_bench.rs"
+harness = false
+
+[[bench]]
 name = "sql_secondary_index"
 path = "benches/sql/secondary_index_bench.rs"
 harness = false

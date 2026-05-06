@@ -41,6 +41,12 @@ cargo bench --bench accel_cpu_crc 2>&1 |
 cargo bench --bench accel_gpu_crc 2>&1 |
     Tee-Object -FilePath (Join-Path $outDir "accel-gpu-crc.log")
 
+cargo bench --bench accel_columnar_filter 2>&1 |
+    Tee-Object -FilePath (Join-Path $outDir "accel-columnar-filter.log")
+
+cargo bench --bench concurrency_hybrid_query 2>&1 |
+    Tee-Object -FilePath (Join-Path $outDir "concurrency-hybrid-query.log")
+
 if ($IncludeSoak) {
     $env:TRIDENT_INCLUDE_SOAK_BENCH = "1"
     cargo bench --bench concurrency_scaling 2>&1 |

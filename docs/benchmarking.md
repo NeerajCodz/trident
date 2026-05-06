@@ -7,7 +7,7 @@ Trident benchmark coverage is organized by workload type:
 - `benches/sql/*_bench.rs`: secondary index and relational access paths.
 - `benches/graph/*_bench.rs`: adjacency and traversal workloads.
 - `benches/vector/*_bench.rs`: ANN/vector search workloads.
-- `benches/concurrency/*_bench.rs`: mixed workload and thread scaling.
+- `benches/concurrency/*_bench.rs`: mixed workload, hybrid query planning, and thread scaling.
 - `benches/durability/*_bench.rs`: WAL, recovery, and compaction behavior.
 
 Baseline captures write timestamped artifacts under `docs/benchmarks/baselines/`.

@@ -109,7 +109,7 @@ fn stress_mixed_value_sizes() {
         .unwrap();
 
     let mut expected_records = 0;
-    let sizes = vec![100, 1_000, 10_000, 100_000, 1_000_000];
+    let sizes = [100, 1_000, 10_000, 100_000, 1_000_000];
 
     for (batch, size) in sizes.iter().enumerate() {
         for i in 0..10 {

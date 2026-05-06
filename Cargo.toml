@@ -26,6 +26,61 @@ criterion = { version = "0.5", features = ["html_reports"] }
 [features]
 default = ["cpu"]
 cpu = []
-cuda = []
-vulkan = []
-metal = []
+gpu = []
+gpu-wgpu = ["gpu"]
+gpu-cuda = ["gpu"]
+gpu-vulkan = ["gpu"]
+gpu-metal = ["gpu"]
+
+[[bench]]
+name = "kv_storage"
+path = "benches/kv/storage_bench.rs"
+harness = false
+
+[[bench]]
+name = "concurrency_mixed_workload"
+path = "benches/concurrency/mixed_workload_bench.rs"
+harness = false
+
+[[bench]]
+name = "concurrency_scaling"
+path = "benches/concurrency/scaling_bench.rs"
+harness = false
+
+[[bench]]
+name = "accel_cpu_crc"
+path = "benches/accel/cpu_crc_bench.rs"
+harness = false
+
+[[bench]]
+name = "accel_gpu_crc"
+path = "benches/accel/gpu_crc_bench.rs"
+harness = false
+
+[[test]]
+name = "engine_smoke"
+path = "tests/engine/smoke_test.rs"
+
+[[test]]
+name = "kv_storage_engine"
+path = "tests/kv/storage_engine_test.rs"
+
+[[test]]
+name = "integration_scenario"
+path = "tests/integration/scenario_test.rs"
+
+[[test]]
+name = "concurrency_benchmark_integration"
+path = "tests/concurrency/benchmark_integration_test.rs"
+
+[[test]]
+name = "concurrency_stress"
+path = "tests/concurrency/stress_test.rs"
+
+[[test]]
+name = "accel_cpu"
+path = "tests/accel/cpu_test.rs"
+
+[[test]]
+name = "accel_gpu_fallback"
+path = "tests/accel/gpu_fallback_test.rs"

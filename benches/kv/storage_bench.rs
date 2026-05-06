@@ -1,8 +1,8 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use std::time::Duration;
 use tempfile::tempdir;
 use trident::bench::{LatencyDistribution, WorkloadGenerator, WorkloadPattern};
-use trident::index::LsmIndex;
+use trident::storage::lsm::LsmIndex;
 use trident::store::{IndexInsert, StorageEngine};
 
 // ──────────────────────────────────────────────
@@ -100,7 +100,7 @@ fn bench_read_patterns(c: &mut Criterion) {
 
                         (engine, dir)
                     },
-                    |(mut engine, _dir)| {
+                    |(engine, _dir)| {
                         let mut workload_gen = WorkloadGenerator::new(pattern, 1000);
                         for _ in 0..1000 {
                             let key_idx = workload_gen.next_key();

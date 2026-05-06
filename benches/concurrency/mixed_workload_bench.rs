@@ -1,12 +1,11 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Instant;
 use tempfile::tempdir;
 use trident::bench::{LatencyDistribution, WorkloadGenerator, WorkloadPattern};
-use trident::bench_advanced::{BenchmarkResult, BenchmarkSuite};
-use trident::index::LsmIndex;
+use trident::storage::lsm::LsmIndex;
 use trident::store::{IndexInsert, StorageEngine};
 use parking_lot::Mutex;
 

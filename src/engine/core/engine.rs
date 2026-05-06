@@ -1,5 +1,6 @@
 use super::state::EngineInner;
-use crate::accel::{Accelerator, CpuAccelerator};
+use crate::accel::{Accelerator, CpuAccelerator, GpuAccelerator};
+use crate::accel::gpu::GpuBackendKind;
 use crate::cache::BlockCache;
 use crate::config::{AcceleratorBackend, PersistedEngineConfig, TridentConfig};
 use crate::disk::DiskLayout;
@@ -43,15 +44,9 @@ impl TridentEngine {
         slog::Logger::init(config.logging.clone());
         let accelerator: Arc<dyn Accelerator> = match config.accelerator {
             AcceleratorBackend::Cpu => Arc::new(CpuAccelerator),
-            AcceleratorBackend::Cuda => {
-                return Err(TridentError::UnsupportedAccelerator("cuda".to_string()));
-            }
-            AcceleratorBackend::Vulkan => {
-                return Err(TridentError::UnsupportedAccelerator("vulkan".to_string()));
-            }
-            AcceleratorBackend::Metal => {
-                return Err(TridentError::UnsupportedAccelerator("metal".to_string()));
-            }
+            AcceleratorBackend::Cuda => Arc::new(GpuAccelerator::new(GpuBackendKind::Cuda)),
+            AcceleratorBackend::Vulkan => Arc::new(GpuAccelerator::new(GpuBackendKind::Vulkan)),
+            AcceleratorBackend::Metal => Arc::new(GpuAccelerator::new(GpuBackendKind::Metal)),
         };
         let layout = DiskLayout::create(&config.data_dir)?;
         let manifest_store = ManifestStore::new(layout.manifest_path());

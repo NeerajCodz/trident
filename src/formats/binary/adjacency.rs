@@ -88,7 +88,7 @@ impl<W: Write> AdjacencyBinaryWriter<W> {
     pub fn write_edge(&mut self, node_id: u64, neighbor_node: u64, neighbor_rid: u64) -> io::Result<()> {
         self.nodes
             .entry(node_id)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(Edge {
                 neighbor_node,
                 neighbor_rid,

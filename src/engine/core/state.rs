@@ -7,7 +7,7 @@ use crate::manifest::Manifest;
 use crate::manifest::ManifestStore;
 use crate::metrics::EngineMetrics;
 use crate::memory::{MemTable, SnapshotManager};
-use crate::types::{ColumnFamily, Key, ValueRef, VersionedValue};
+use crate::types::{ColumnFamily, Key, VersionedValue};
 use crate::wal::Wal;
 use parking_lot::{Condvar, Mutex};
 use std::collections::BTreeMap;
@@ -48,5 +48,3 @@ pub(crate) struct EngineInner {
     pub(crate) accelerator: Arc<dyn Accelerator>,
 }
 
-#[allow(dead_code)]
-pub(crate) type ValueReference<'a> = ValueRef<'a>;

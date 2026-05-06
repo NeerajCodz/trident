@@ -1,7 +1,7 @@
-/// Phase 3B Integration Tests: Advanced Benchmarking & Performance Analysis
-///
-/// This test module validates the complete Phase 3B benchmarking infrastructure
-/// including workload generation, metrics collection, and regression detection.
+//! Phase 3B Integration Tests: Advanced Benchmarking & Performance Analysis
+//!
+//! This test module validates the complete Phase 3B benchmarking infrastructure
+//! including workload generation, metrics collection, and regression detection.
 
 #[cfg(test)]
 mod phase3b_integration {
@@ -11,10 +11,10 @@ mod phase3b_integration {
         WorkloadPattern, WriteAmplificationTracker,
     };
     use trident::bench_advanced::{BenchmarkResult, BenchmarkSuite};
-    use trident::storage::lsm::LsmIndex;
-    use trident::store::{IndexInsert, StorageEngine};
     use std::sync::Arc;
     use std::thread;
+    use trident::storage::lsm::LsmIndex;
+    use trident::store::{IndexInsert, StorageEngine};
 
     #[test]
     fn test_phase3b_sequential_workload() {
@@ -32,7 +32,7 @@ mod phase3b_integration {
         let mut workload = WorkloadGenerator::new(WorkloadPattern::Sequential, 100);
         let mut latency_dist = LatencyDistribution::new();
 
-        for i in 0..100 {
+        for _ in 0..100 {
             let start = std::time::Instant::now();
             let data = vec![0xaa_u8; 1024];
             engine
@@ -83,7 +83,7 @@ mod phase3b_integration {
             match name {
                 "Sequential" => {
                     // Sequential should have some predictability
-                    assert!(unique_keys.len() >= 1);
+                    assert!(!unique_keys.is_empty());
                 }
                 _ => {
                     // Others should have reasonable diversity
@@ -111,13 +111,22 @@ mod phase3b_integration {
         assert_eq!(tracker.wal_bytes(), 300);
 
         let phys_amp = tracker.write_amplification();
-        assert!(phys_amp >= 1.5 && phys_amp <= 1.51, "Physical amp should be ~1.5x");
+        assert!(
+            (1.5..=1.51).contains(&phys_amp),
+            "Physical amp should be ~1.5x"
+        );
 
         let wal_amp = tracker.wal_amplification();
-        assert!(wal_amp >= 0.99 && wal_amp <= 1.01, "WAL amp should be ~1.0x");
+        assert!(
+            (0.99..=1.01).contains(&wal_amp),
+            "WAL amp should be ~1.0x"
+        );
 
         let total_amp = tracker.total_amplification();
-        assert!(total_amp >= 2.49 && total_amp <= 2.51, "Total amp should be ~2.5x");
+        assert!(
+            (2.49..=2.51).contains(&total_amp),
+            "Total amp should be ~2.5x"
+        );
 
         println!("{}", tracker.format_report());
     }
@@ -166,7 +175,7 @@ mod phase3b_integration {
         assert!(contention_rate > 0.16 && contention_rate < 0.17);
 
         let avg_wait = tracker.avg_wait_us();
-        assert!(avg_wait >= 70 && avg_wait <= 80);
+        assert!((70..=80).contains(&avg_wait));
 
         println!("{}", tracker.format_report());
     }

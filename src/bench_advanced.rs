@@ -6,9 +6,12 @@
 //! - Benchmark result reporting and comparison
 //! - Performance regression detection
 
+use crate::bench::{
+    LatencyDistribution, LockContentionTracker, ThroughputMeter, WorkloadPattern,
+    WriteAmplificationTracker,
+};
+use serde::{Deserialize, Serialize};
 use std::fmt;
-use serde::{Serialize, Deserialize};
-use crate::bench::{LatencyDistribution, WorkloadPattern, WriteAmplificationTracker, LockContentionTracker, ThroughputMeter};
 
 /// Benchmark result for a single test run
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -128,9 +131,10 @@ impl BenchmarkSuite {
         let mut regressions = Vec::new();
 
         for current_result in &self.results {
-            if let Some(baseline_result) = baseline.results.iter()
-                .find(|r| r.name == current_result.name && r.workload_pattern == current_result.workload_pattern) {
-                
+            if let Some(baseline_result) = baseline.results.iter().find(|r| {
+                r.name == current_result.name
+                    && r.workload_pattern == current_result.workload_pattern
+            }) {
                 let mut regression = PerformanceRegression {
                     benchmark_name: current_result.name.clone(),
                     workload: current_result.workload_pattern.clone(),
@@ -250,7 +254,9 @@ impl BenchmarkStatistics {
             stats.avg_write_amp_total += result.write_amp_total / len;
             stats.avg_contention_rate += result.lock_contention_rate / len;
             stats.max_latency_p99_us = stats.max_latency_p99_us.max(result.latency_p99_us);
-            stats.min_throughput_ops_per_sec = stats.min_throughput_ops_per_sec.min(result.throughput_ops_per_sec);
+            stats.min_throughput_ops_per_sec = stats
+                .min_throughput_ops_per_sec
+                .min(result.throughput_ops_per_sec);
         }
 
         stats

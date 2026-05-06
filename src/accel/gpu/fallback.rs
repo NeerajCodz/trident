@@ -59,17 +59,27 @@ impl Accelerator for GpuAccelerator {
 
     fn squared_l2_distance(&self, left: &[f32], right: &[f32]) -> Option<f32> {
         match self.device.backend {
-            GpuBackendKind::Cuda => crate::accel::gpu::cuda::vector::squared_l2_distance(left, right),
-            GpuBackendKind::Vulkan => crate::accel::gpu::vulkan::compute::squared_l2_distance(left, right),
-            GpuBackendKind::Metal => crate::accel::gpu::metal::compute::squared_l2_distance(left, right),
-            GpuBackendKind::Wgpu => crate::accel::gpu::wgpu::compute::squared_l2_distance(left, right),
+            GpuBackendKind::Cuda => {
+                crate::accel::gpu::cuda::vector::squared_l2_distance(left, right)
+            }
+            GpuBackendKind::Vulkan => {
+                crate::accel::gpu::vulkan::compute::squared_l2_distance(left, right)
+            }
+            GpuBackendKind::Metal => {
+                crate::accel::gpu::metal::compute::squared_l2_distance(left, right)
+            }
+            GpuBackendKind::Wgpu => {
+                crate::accel::gpu::wgpu::compute::squared_l2_distance(left, right)
+            }
         }
     }
 
     fn inner_product_distance(&self, left: &[f32], right: &[f32]) -> Option<f32> {
         match self.device.backend {
             GpuBackendKind::Cuda => crate::accel::gpu::cuda::vector::inner_product(left, right),
-            GpuBackendKind::Vulkan => crate::accel::gpu::vulkan::compute::inner_product(left, right),
+            GpuBackendKind::Vulkan => {
+                crate::accel::gpu::vulkan::compute::inner_product(left, right)
+            }
             GpuBackendKind::Metal => crate::accel::gpu::metal::compute::inner_product(left, right),
             GpuBackendKind::Wgpu => crate::accel::gpu::wgpu::compute::inner_product(left, right),
         }
@@ -78,22 +88,35 @@ impl Accelerator for GpuAccelerator {
     fn cosine_distance(&self, left: &[f32], right: &[f32]) -> Option<f32> {
         match self.device.backend {
             GpuBackendKind::Cuda => crate::accel::gpu::cuda::vector::cosine_distance(left, right),
-            GpuBackendKind::Vulkan => crate::accel::gpu::vulkan::compute::cosine_distance(left, right),
-            GpuBackendKind::Metal => crate::accel::gpu::metal::compute::cosine_distance(left, right),
+            GpuBackendKind::Vulkan => {
+                crate::accel::gpu::vulkan::compute::cosine_distance(left, right)
+            }
+            GpuBackendKind::Metal => {
+                crate::accel::gpu::metal::compute::cosine_distance(left, right)
+            }
             GpuBackendKind::Wgpu => crate::accel::gpu::wgpu::compute::cosine_distance(left, right),
         }
     }
 
     fn batch_squared_l2(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<Option<f32>> {
-        vectors.iter().map(|v| self.squared_l2_distance(query, v)).collect()
+        vectors
+            .iter()
+            .map(|v| self.squared_l2_distance(query, v))
+            .collect()
     }
 
     fn batch_inner_product(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<Option<f32>> {
-        vectors.iter().map(|v| self.inner_product_distance(query, v)).collect()
+        vectors
+            .iter()
+            .map(|v| self.inner_product_distance(query, v))
+            .collect()
     }
 
     fn batch_cosine_distance(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<Option<f32>> {
-        vectors.iter().map(|v| self.cosine_distance(query, v)).collect()
+        vectors
+            .iter()
+            .map(|v| self.cosine_distance(query, v))
+            .collect()
     }
 
     fn crc32c_batch(&self, buffers: &[&[u8]]) -> Vec<u32> {

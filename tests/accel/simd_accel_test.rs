@@ -1,5 +1,5 @@
-use trident::accel::{Accelerator, CpuAccelerator};
 use trident::accel::cpu::SimdCpuAccelerator;
+use trident::accel::{Accelerator, CpuAccelerator};
 use trident::config::Compression;
 
 #[test]
@@ -94,7 +94,10 @@ fn simd_cosine_distance_correctness() {
     let a = vec![1.0f32, 0.0, 0.0, 0.0];
     let b = vec![0.0f32, 1.0, 0.0, 0.0];
     let dist = simd.cosine_distance(&a, &b).unwrap();
-    assert!((dist - 1.0).abs() < 1e-4, "Orthogonal vectors should have cosine distance 1.0");
+    assert!(
+        (dist - 1.0).abs() < 1e-4,
+        "Orthogonal vectors should have cosine distance 1.0"
+    );
 
     let c = vec![3.0f32, 4.0, 0.0, 0.0];
     let dist_self = simd.cosine_distance(&c, &c).unwrap();

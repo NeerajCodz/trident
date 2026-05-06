@@ -114,10 +114,7 @@ pub trait Accelerator: Send + Sync {
     }
 
     fn columnar_multi_eq_mask(&self, values: &[&[u8]], needles: &[&[u8]]) -> Vec<bool> {
-        values
-            .iter()
-            .map(|v| needles.contains(v))
-            .collect()
+        values.iter().map(|v| needles.contains(v)).collect()
     }
 
     fn prefetch_read(&self, _ptr: *const u8) {}

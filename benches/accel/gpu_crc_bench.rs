@@ -1,6 +1,6 @@
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
-use trident::accel::gpu::{GpuAccelerator, GpuBackendKind};
 use trident::accel::Accelerator;
+use trident::accel::gpu::{GpuAccelerator, GpuBackendKind};
 
 fn bench_gpu_crc32c_fallbacks(c: &mut Criterion) {
     let payload = vec![0xbb_u8; 1024 * 1024];

@@ -27,10 +27,18 @@ fn scenario_multi_index_node_insertion() {
 
     // Register multiple index types for different access patterns
     engine
-        .register_index("kv", "default", Box::new(LsmIndex::open("kv", &index_dir).unwrap()))
+        .register_index(
+            "kv",
+            "default",
+            Box::new(LsmIndex::open("kv", &index_dir).unwrap()),
+        )
         .unwrap();
     engine
-        .register_index("btree", "default", Box::new(BTreeIndex::open("btree", &index_dir).unwrap()))
+        .register_index(
+            "btree",
+            "default",
+            Box::new(BTreeIndex::open("btree", &index_dir).unwrap()),
+        )
         .unwrap();
 
     // Simulate a node that is indexed in two ways
@@ -72,10 +80,18 @@ fn scenario_concurrent_multi_index_writes() {
 
     let mut engine = StorageEngine::open(dir.path(), 64 * 1024 * 1024).unwrap();
     engine
-        .register_index("kv", "default", Box::new(LsmIndex::open("kv", &index_dir).unwrap()))
+        .register_index(
+            "kv",
+            "default",
+            Box::new(LsmIndex::open("kv", &index_dir).unwrap()),
+        )
         .unwrap();
     engine
-        .register_index("bt", "default", Box::new(BTreeIndex::open("bt", &index_dir).unwrap()))
+        .register_index(
+            "bt",
+            "default",
+            Box::new(BTreeIndex::open("bt", &index_dir).unwrap()),
+        )
         .unwrap();
 
     let engine = Arc::new(parking_lot::Mutex::new(engine));
@@ -90,7 +106,10 @@ fn scenario_concurrent_multi_index_writes() {
                 let mut e = engine.lock();
                 e.put(
                     format!("kv_data_{i}").as_bytes(),
-                    &[IndexInsert::new("kv", format!("kv_key_{i:03}").into_bytes())],
+                    &[IndexInsert::new(
+                        "kv",
+                        format!("kv_key_{i:03}").into_bytes(),
+                    )],
                 )
                 .unwrap();
             }
@@ -106,7 +125,10 @@ fn scenario_concurrent_multi_index_writes() {
                 let mut e = engine.lock();
                 e.put(
                     format!("bt_data_{i}").as_bytes(),
-                    &[IndexInsert::new("bt", format!("bt_key_{i:03}").into_bytes())],
+                    &[IndexInsert::new(
+                        "bt",
+                        format!("bt_key_{i:03}").into_bytes(),
+                    )],
                 )
                 .unwrap();
             }
@@ -138,10 +160,18 @@ fn scenario_large_document_multi_index() {
     let mut engine = StorageEngine::open(dir.path(), 256 * 1024 * 1024).unwrap();
 
     engine
-        .register_index("kv", "default", Box::new(LsmIndex::open("kv", &index_dir).unwrap()))
+        .register_index(
+            "kv",
+            "default",
+            Box::new(LsmIndex::open("kv", &index_dir).unwrap()),
+        )
         .unwrap();
     engine
-        .register_index("bt", "default", Box::new(BTreeIndex::open("bt", &index_dir).unwrap()))
+        .register_index(
+            "bt",
+            "default",
+            Box::new(BTreeIndex::open("bt", &index_dir).unwrap()),
+        )
         .unwrap();
 
     // Create a 10MB document
@@ -163,8 +193,14 @@ fn scenario_large_document_multi_index() {
     assert_eq!(retrieved, document);
 
     // Verify both index lookups work
-    assert_eq!(engine.lookup_rid("kv", b"large_doc_key").unwrap(), Some(rid));
-    assert_eq!(engine.lookup_rid("bt", b"idx_size_10mb").unwrap(), Some(rid));
+    assert_eq!(
+        engine.lookup_rid("kv", b"large_doc_key").unwrap(),
+        Some(rid)
+    );
+    assert_eq!(
+        engine.lookup_rid("bt", b"idx_size_10mb").unwrap(),
+        Some(rid)
+    );
 }
 
 // ──────────────────────────────────────────────
@@ -179,7 +215,11 @@ fn scenario_maintenance_during_writes() {
     let mut engine = StorageEngine::open(dir.path(), 64 * 1024 * 1024).unwrap();
 
     engine
-        .register_index("kv", "default", Box::new(LsmIndex::open("kv", &index_dir).unwrap()))
+        .register_index(
+            "kv",
+            "default",
+            Box::new(LsmIndex::open("kv", &index_dir).unwrap()),
+        )
         .unwrap();
 
     // Write initial data
@@ -220,10 +260,18 @@ fn scenario_multi_index_deletion() {
     let mut engine = StorageEngine::open(dir.path(), 64 * 1024 * 1024).unwrap();
 
     engine
-        .register_index("kv", "default", Box::new(LsmIndex::open("kv", &index_dir).unwrap()))
+        .register_index(
+            "kv",
+            "default",
+            Box::new(LsmIndex::open("kv", &index_dir).unwrap()),
+        )
         .unwrap();
     engine
-        .register_index("bt", "default", Box::new(BTreeIndex::open("bt", &index_dir).unwrap()))
+        .register_index(
+            "bt",
+            "default",
+            Box::new(BTreeIndex::open("bt", &index_dir).unwrap()),
+        )
         .unwrap();
 
     // Insert a record in both indexes
@@ -267,7 +315,11 @@ fn scenario_engine_restart_recovery() {
     {
         let mut engine = StorageEngine::open(dir.path(), 64 * 1024 * 1024).unwrap();
         engine
-            .register_index("kv", "default", Box::new(LsmIndex::open("kv", &index_dir).unwrap()))
+            .register_index(
+                "kv",
+                "default",
+                Box::new(LsmIndex::open("kv", &index_dir).unwrap()),
+            )
             .unwrap();
 
         for i in 0..50 {
@@ -285,7 +337,11 @@ fn scenario_engine_restart_recovery() {
     {
         let mut engine = StorageEngine::open(dir.path(), 64 * 1024 * 1024).unwrap();
         engine
-            .register_index("kv", "default", Box::new(LsmIndex::open("kv", &index_dir).unwrap()))
+            .register_index(
+                "kv",
+                "default",
+                Box::new(LsmIndex::open("kv", &index_dir).unwrap()),
+            )
             .unwrap();
 
         let stats = engine.stats();
@@ -299,7 +355,10 @@ fn scenario_engine_restart_recovery() {
             let result = engine
                 .fetch_by_index("kv", format!("key_{i:03}").as_bytes())
                 .unwrap();
-            assert!(result.is_some(), "record {i} should be recovered after restart");
+            assert!(
+                result.is_some(),
+                "record {i} should be recovered after restart"
+            );
         }
     }
 }

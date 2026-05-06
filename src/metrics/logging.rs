@@ -182,8 +182,8 @@ mod tests {
 
     #[test]
     fn log_context_plain_format() {
-        let ctx = LogContext::new(LogLevel::Warn, "cache", "cache full")
-            .with_field("size_mb", "512");
+        let ctx =
+            LogContext::new(LogLevel::Warn, "cache", "cache full").with_field("size_mb", "512");
 
         let plain = ctx.to_plain();
         assert!(plain.contains("[WARN ]"));

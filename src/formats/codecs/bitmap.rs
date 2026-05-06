@@ -1,4 +1,4 @@
-use super::{decode_envelope, encode_envelope, read_u32, read_u64, BinaryFormatKind, FormatCodec};
+use super::{BinaryFormatKind, FormatCodec, decode_envelope, encode_envelope, read_u32, read_u64};
 use crate::errors::Result;
 
 #[derive(Clone, Debug, Eq, PartialEq)]

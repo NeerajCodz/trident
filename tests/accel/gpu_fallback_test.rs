@@ -1,8 +1,8 @@
 use tempfile::tempdir;
+use trident::TridentEngine;
 use trident::accel::gpu::{GpuAccelerator, GpuBackendKind};
 use trident::accel::{Accelerator, CpuAccelerator};
 use trident::config::{AcceleratorBackend, Compression, TridentConfig};
-use trident::TridentEngine;
 
 #[test]
 fn gpu_backends_match_cpu_results_without_hardware() {

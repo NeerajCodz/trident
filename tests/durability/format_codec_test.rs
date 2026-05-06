@@ -1,3 +1,4 @@
+use trident::formats::codecs::FormatCodec;
 use trident::formats::codecs::bitmap::{BitmapBlock, BitmapCodec};
 use trident::formats::codecs::checkpoint::{CheckpointBlock, CheckpointCodec};
 use trident::formats::codecs::columnar::{ColumnarBlock, ColumnarBlockCodec};
@@ -5,7 +6,6 @@ use trident::formats::codecs::filter::{FilterBlock, FilterCodec};
 use trident::formats::codecs::postings::{PostingsCodec, PostingsList};
 use trident::formats::codecs::row::{RowRecord, RowRecordCodec};
 use trident::formats::codecs::vector_graph::{VectorGraphCodec, VectorGraphNode};
-use trident::formats::codecs::FormatCodec;
 
 #[test]
 fn versioned_format_codecs_roundtrip() {

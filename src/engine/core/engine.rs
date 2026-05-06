@@ -1,6 +1,6 @@
 use super::state::EngineInner;
-use crate::accel::{Accelerator, CpuAccelerator, GpuAccelerator};
 use crate::accel::gpu::GpuBackendKind;
+use crate::accel::{Accelerator, CpuAccelerator, GpuAccelerator};
 use crate::cache::BlockCache;
 use crate::config::{AcceleratorBackend, PersistedEngineConfig, TridentConfig};
 use crate::disk::DiskLayout;
@@ -12,8 +12,8 @@ use crate::manifest::{
     CheckpointMetadata, ColumnFamilyDescriptor, ColumnFamilyOptions, CompactionJobStatus,
     ManifestStore,
 };
-use crate::metrics::EngineMetrics;
 use crate::memory::{MemTable, SnapshotManager};
+use crate::metrics::EngineMetrics;
 use crate::recovery::{GcReport, RecoveryReport, write_checkpoint_with_policy};
 use crate::segments::{SegmentReader, SegmentWriteOptions, SegmentWriter};
 use crate::slog;

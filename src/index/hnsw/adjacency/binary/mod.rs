@@ -5,19 +5,17 @@
 //! - AdjacencyMetadata (24 bytes): node_count, edge_count, generation, sequence
 //! - Node entries: [node_id (8B) | edge_count (4B) | [neighbor_rids (8B each)] | [neighbor_nodes (8B each)]]
 
-use crate::formats::{
-    BinaryWriter, ChecksumValidator, FormatHeader, IndexType, TRIDENT_MAGIC,
-};
+use crate::formats::{BinaryWriter, ChecksumValidator, FormatHeader, IndexType, TRIDENT_MAGIC};
 use std::collections::BTreeMap;
 use std::io::{self, Read, Write};
 
 /// Adjacency metadata (24 bytes when serialized)
 #[derive(Debug, Clone)]
 pub struct AdjacencyBinaryMetadata {
-    pub node_count: u32,    // Total nodes
-    pub edge_count: u32,    // Total edges
-    pub generation: u64,    // Compaction generation
-    pub sequence: u64,      // WAL sequence number
+    pub node_count: u32, // Total nodes
+    pub edge_count: u32, // Total edges
+    pub generation: u64, // Compaction generation
+    pub sequence: u64,   // WAL sequence number
 }
 
 impl AdjacencyBinaryMetadata {
@@ -85,14 +83,16 @@ impl<W: Write> AdjacencyBinaryWriter<W> {
     }
 
     /// Add edge from node_id to neighbor
-    pub fn write_edge(&mut self, node_id: u64, neighbor_node: u64, neighbor_rid: u64) -> io::Result<()> {
-        self.nodes
-            .entry(node_id)
-            .or_default()
-            .push(Edge {
-                neighbor_node,
-                neighbor_rid,
-            });
+    pub fn write_edge(
+        &mut self,
+        node_id: u64,
+        neighbor_node: u64,
+        neighbor_rid: u64,
+    ) -> io::Result<()> {
+        self.nodes.entry(node_id).or_default().push(Edge {
+            neighbor_node,
+            neighbor_rid,
+        });
         self.metadata.edge_count += 1;
         Ok(())
     }
@@ -326,8 +326,16 @@ mod tests {
 
         let edges_1 = reader.get_edges(1).unwrap();
         assert_eq!(edges_1.len(), 2);
-        assert!(edges_1.iter().any(|e| e.neighbor_node == 2 && e.neighbor_rid == 200));
-        assert!(edges_1.iter().any(|e| e.neighbor_node == 3 && e.neighbor_rid == 300));
+        assert!(
+            edges_1
+                .iter()
+                .any(|e| e.neighbor_node == 2 && e.neighbor_rid == 200)
+        );
+        assert!(
+            edges_1
+                .iter()
+                .any(|e| e.neighbor_node == 3 && e.neighbor_rid == 300)
+        );
 
         let neighbors_2 = reader.get_neighbors(2).unwrap();
         assert_eq!(neighbors_2, vec![1, 4]);

@@ -1,8 +1,8 @@
+use trident::RecordId;
 use trident::index::hnsw::adjacency::AdjacencyIndex;
 use trident::kernel::ExecutionMode;
-use trident::query::graph::{traverse, GraphTraversal};
-use trident::query::{plan, QueryModel};
-use trident::RecordId;
+use trident::query::graph::{GraphTraversal, traverse};
+use trident::query::{QueryModel, plan};
 
 #[test]
 fn graph_plans_to_adjacency_path() {

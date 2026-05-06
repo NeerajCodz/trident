@@ -115,9 +115,7 @@ fn stress_mixed_value_sizes() {
         for i in 0..10 {
             let value = vec![0xbb; *size];
             let key = format!("batch-{}-item-{}", batch, i).into_bytes();
-            let rid = engine
-                .put(&value, &[IndexInsert::new("kv", key)])
-                .unwrap();
+            let rid = engine.put(&value, &[IndexInsert::new("kv", key)]).unwrap();
 
             let retrieved = engine.fetch(rid).unwrap();
             assert_eq!(retrieved.len(), *size);
@@ -170,7 +168,9 @@ fn stress_lsm_large_key_count() {
     // Spot-check some lookups.
     for i in [0, key_count / 2, key_count - 1] {
         assert_eq!(
-            engine.lookup_rid("kv", format!("k{i:08}").as_bytes()).unwrap(),
+            engine
+                .lookup_rid("kv", format!("k{i:08}").as_bytes())
+                .unwrap(),
             Some(rids[i])
         );
     }
@@ -242,7 +242,9 @@ fn stress_compaction_with_concurrent_writes() {
     // Verify reads still work after compaction.
     for i in [0, 500, 999] {
         assert_eq!(
-            engine.lookup_rid("kv", format!("key{i}").as_bytes()).unwrap(),
+            engine
+                .lookup_rid("kv", format!("key{i}").as_bytes())
+                .unwrap(),
             Some(RecordId(i as u64 + 1)) // RID is 1-indexed
         );
     }

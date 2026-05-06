@@ -1,5 +1,5 @@
 use super::{
-    decode_envelope, encode_envelope, read_bytes, read_u32, BinaryFormatKind, FormatCodec,
+    BinaryFormatKind, FormatCodec, decode_envelope, encode_envelope, read_bytes, read_u32,
 };
 use crate::errors::Result;
 

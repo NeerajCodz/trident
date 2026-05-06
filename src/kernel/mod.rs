@@ -160,9 +160,7 @@ impl CacheAlignedBuffer {
     }
 
     pub fn from_slice(src: &[u8]) -> Self {
-        Self {
-            data: src.to_vec(),
-        }
+        Self { data: src.to_vec() }
     }
 
     pub fn as_slice(&self) -> &[u8] {
@@ -195,9 +193,7 @@ impl CacheAlignedF32Buffer {
     }
 
     pub fn from_slice(src: &[f32]) -> Self {
-        Self {
-            data: src.to_vec(),
-        }
+        Self { data: src.to_vec() }
     }
 
     pub fn as_slice(&self) -> &[f32] {

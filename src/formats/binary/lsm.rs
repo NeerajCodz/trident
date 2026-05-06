@@ -5,20 +5,18 @@
 //! - LsmBinaryMetadata (29 bytes): bloom_bits, bloom_hashes, entry_count, generation, sequence
 //! - Key-value entries: [key_len (4B) | key_bytes | rid (8B)]
 
-use crate::formats::{
-    BinaryWriter, ChecksumValidator, FormatHeader, IndexType, TRIDENT_MAGIC,
-};
+use crate::formats::{BinaryWriter, ChecksumValidator, FormatHeader, IndexType, TRIDENT_MAGIC};
 use std::collections::BTreeMap;
 use std::io::{self, Read, Write};
 
 /// LSM metadata (29 bytes when serialized)
 #[derive(Debug, Clone)]
 pub struct LsmBinaryMetadata {
-    pub bloom_bits: u64,     // Bloom filter size in bits
-    pub bloom_hashes: u8,    // Number of hash functions
-    pub entry_count: u32,    // Number of entries
-    pub generation: u64,     // Compaction generation
-    pub sequence: u64,       // WAL sequence number
+    pub bloom_bits: u64,  // Bloom filter size in bits
+    pub bloom_hashes: u8, // Number of hash functions
+    pub entry_count: u32, // Number of entries
+    pub generation: u64,  // Compaction generation
+    pub sequence: u64,    // WAL sequence number
 }
 
 impl LsmBinaryMetadata {

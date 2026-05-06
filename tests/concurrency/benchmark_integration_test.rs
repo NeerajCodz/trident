@@ -5,14 +5,14 @@
 
 #[cfg(test)]
 mod phase3b_integration {
+    use std::sync::Arc;
+    use std::thread;
     use tempfile::tempdir;
     use trident::bench::{
         LatencyDistribution, LockContentionTracker, ThroughputMeter, WorkloadGenerator,
         WorkloadPattern, WriteAmplificationTracker,
     };
     use trident::bench_advanced::{BenchmarkResult, BenchmarkSuite};
-    use std::sync::Arc;
-    use std::thread;
     use trident::storage::lsm::LsmIndex;
     use trident::store::{IndexInsert, StorageEngine};
 
@@ -67,7 +67,12 @@ mod phase3b_integration {
         let patterns = vec![
             ("Sequential", WorkloadPattern::Sequential),
             ("UniformRandom", WorkloadPattern::UniformRandom),
-            ("HotKey", WorkloadPattern::HotKey { hotset_fraction: 0.8 }),
+            (
+                "HotKey",
+                WorkloadPattern::HotKey {
+                    hotset_fraction: 0.8,
+                },
+            ),
             ("Zipfian", WorkloadPattern::Zipfian { exponent: 0.99 }),
         ];
 
@@ -76,7 +81,11 @@ mod phase3b_integration {
             let keys: Vec<usize> = (0..100).map(|_| workload.next_key()).collect();
 
             // Verify keys are within bounds
-            assert!(keys.iter().all(|&k| k < 1000), "Pattern {} generated invalid keys", name);
+            assert!(
+                keys.iter().all(|&k| k < 1000),
+                "Pattern {} generated invalid keys",
+                name
+            );
 
             // Verify diversity (except sequential which might have patterns)
             let unique_keys: std::collections::HashSet<_> = keys.iter().cloned().collect();
@@ -87,11 +96,19 @@ mod phase3b_integration {
                 }
                 _ => {
                     // Others should have reasonable diversity
-                    assert!(unique_keys.len() > 1, "Pattern {} has insufficient diversity", name);
+                    assert!(
+                        unique_keys.len() > 1,
+                        "Pattern {} has insufficient diversity",
+                        name
+                    );
                 }
             }
 
-            println!("Pattern {}: {} unique keys in 100 samples", name, unique_keys.len());
+            println!(
+                "Pattern {}: {} unique keys in 100 samples",
+                name,
+                unique_keys.len()
+            );
         }
     }
 
@@ -117,10 +134,7 @@ mod phase3b_integration {
         );
 
         let wal_amp = tracker.wal_amplification();
-        assert!(
-            (0.99..=1.01).contains(&wal_amp),
-            "WAL amp should be ~1.0x"
-        );
+        assert!((0.99..=1.01).contains(&wal_amp), "WAL amp should be ~1.0x");
 
         let total_amp = tracker.total_amplification();
         assert!(
@@ -310,18 +324,25 @@ mod phase3b_integration {
 
         let regression = &regressions[0];
         assert_eq!(regression.benchmark_name, "read_workload");
-        assert!(!regression.metrics.is_empty(), "Should have metric regression details");
+        assert!(
+            !regression.metrics.is_empty(),
+            "Should have metric regression details"
+        );
 
         // Verify P99 latency regression was detected
-        let p99_regression = regression
-            .metrics
-            .iter()
-            .find(|m| m.metric.contains("P99"));
-        assert!(p99_regression.is_some(), "P99 latency regression should be detected");
+        let p99_regression = regression.metrics.iter().find(|m| m.metric.contains("P99"));
+        assert!(
+            p99_regression.is_some(),
+            "P99 latency regression should be detected"
+        );
 
         println!("Detected {} regressions", regressions.len());
         for r in &regressions {
-            println!("  {}: {} metrics regressed", r.benchmark_name, r.metrics.len());
+            println!(
+                "  {}: {} metrics regressed",
+                r.benchmark_name,
+                r.metrics.len()
+            );
         }
     }
 

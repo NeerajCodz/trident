@@ -6,8 +6,8 @@
 
 pub mod binary;
 
-use crate::index::{IndexPlugin, IndexStats};
 use crate::errors::{Result, TridentError};
+use crate::index::{IndexPlugin, IndexStats};
 use crate::io::{BinaryReader, BinaryWriter, crc32c};
 use crate::store::RecordId;
 use serde::{Deserialize, Serialize};

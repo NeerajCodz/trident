@@ -62,10 +62,7 @@ impl Accelerator for SimdCpuAccelerator {
     }
 
     fn batch_squared_l2(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<Option<f32>> {
-        vectors
-            .iter()
-            .map(|v| simd_squared_l2(query, v))
-            .collect()
+        vectors.iter().map(|v| simd_squared_l2(query, v)).collect()
     }
 
     fn batch_inner_product(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<Option<f32>> {
@@ -316,10 +313,7 @@ fn simd_f32_range_mask(values: &[f32], min: f32, max: f32) -> Vec<bool> {
 
 /// Multi-needle equality mask for columnar scans.
 fn simd_multi_eq_mask(values: &[&[u8]], needles: &[&[u8]]) -> Vec<bool> {
-    values
-        .iter()
-        .map(|v| needles.contains(v))
-        .collect()
+    values.iter().map(|v| needles.contains(v)).collect()
 }
 
 #[cfg(test)]
@@ -328,7 +322,10 @@ mod tests {
 
     #[test]
     fn compare_keys_equal() {
-        assert_eq!(simd_compare_keys(b"hello", b"hello"), std::cmp::Ordering::Equal);
+        assert_eq!(
+            simd_compare_keys(b"hello", b"hello"),
+            std::cmp::Ordering::Equal
+        );
     }
 
     #[test]
@@ -338,12 +335,18 @@ mod tests {
 
     #[test]
     fn compare_keys_greater() {
-        assert_eq!(simd_compare_keys(b"abd", b"abc"), std::cmp::Ordering::Greater);
+        assert_eq!(
+            simd_compare_keys(b"abd", b"abc"),
+            std::cmp::Ordering::Greater
+        );
     }
 
     #[test]
     fn compare_keys_prefix() {
-        assert_eq!(simd_compare_keys(b"abc", b"abcdef"), std::cmp::Ordering::Less);
+        assert_eq!(
+            simd_compare_keys(b"abc", b"abcdef"),
+            std::cmp::Ordering::Less
+        );
     }
 
     #[test]
@@ -393,14 +396,20 @@ mod tests {
     fn u64_range_mask_basic() {
         let values = vec![1, 5, 10, 15, 20, 25, 30, 35];
         let mask = simd_u64_range_mask(&values, 10, 25);
-        assert_eq!(mask, vec![false, false, true, true, true, true, false, false]);
+        assert_eq!(
+            mask,
+            vec![false, false, true, true, true, true, false, false]
+        );
     }
 
     #[test]
     fn f32_range_mask_basic() {
         let values = vec![1.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0, 35.0];
         let mask = simd_f32_range_mask(&values, 10.0, 25.0);
-        assert_eq!(mask, vec![false, false, true, true, true, true, false, false]);
+        assert_eq!(
+            mask,
+            vec![false, false, true, true, true, true, false, false]
+        );
     }
 
     #[test]

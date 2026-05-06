@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package trident.query.v1;
+
+service Sql { rpc Execute(SqlRequest) returns (SqlResponse); }
+service Graph { rpc Traverse(GraphRequest) returns (GraphResponse); }
+service Vector { rpc Search(VectorRequest) returns (VectorResponse); }
+service Search { rpc Query(SearchRequest) returns (SearchResponse); }
+service Benchmark { rpc Run(BenchmarkRequest) returns (BenchmarkResponse); }
+
+message SqlRequest { string statement = 1; }
+message SqlResponse { repeated bytes rows = 1; }
+message GraphRequest { uint64 start_record_id = 1; uint32 max_depth = 2; }
+message GraphResponse { repeated uint64 record_ids = 1; }
+message VectorRequest { repeated float vector = 1; uint32 limit = 2; bytes filter = 3; }
+message VectorHit { uint64 record_id = 1; float score = 2; }
+message VectorResponse { repeated VectorHit hits = 1; }
+message SearchRequest { repeated string terms = 1; repeated string fields = 2; uint32 limit = 3; }
+message SearchResponse { repeated uint64 record_ids = 1; }
+message BenchmarkRequest { string suite = 1; }
+message BenchmarkResponse { string artifact_path = 1; }

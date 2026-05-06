@@ -10,12 +10,22 @@
 //! This guarantees that each value is stored on disk exactly once,
 //! regardless of how many index plugins reference it simultaneously.
 
+pub mod bitmap;
 pub mod btree;
 pub mod hnsw;
+pub mod inverted;
+pub mod ivf;
+pub mod rtree;
+pub mod time_series;
 
+pub use bitmap::BitmapIndex;
 pub use btree::BTreeIndex;
 pub use hnsw::HnswIndex;
 pub use hnsw::adjacency::AdjacencyIndex;
+pub use inverted::InvertedIndex;
+pub use ivf::IvfFlatIndex;
+pub use rtree::{BoundingBox, PackedRTreeIndex};
+pub use time_series::TimePartition;
 
 use crate::errors::Result;
 use crate::store::RecordId;

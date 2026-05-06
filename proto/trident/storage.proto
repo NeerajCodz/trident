@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package trident.storage.v1;
+
+service StorageAdmin {
+  rpc Health(HealthRequest) returns (HealthResponse);
+  rpc Flush(FlushRequest) returns (FlushResponse);
+  rpc Compact(CompactRequest) returns (CompactResponse);
+}
+
+service Kv {
+  rpc Get(KvGetRequest) returns (KvGetResponse);
+  rpc Put(KvPutRequest) returns (KvPutResponse);
+  rpc Delete(KvDeleteRequest) returns (KvDeleteResponse);
+}
+
+message HealthRequest {}
+message HealthResponse { string status = 1; }
+message FlushRequest {}
+message FlushResponse { bool ok = 1; }
+message CompactRequest { string target = 1; }
+message CompactResponse { bool ok = 1; }
+message KvGetRequest { bytes key = 1; }
+message KvGetResponse { bytes value = 1; bool found = 2; }
+message KvPutRequest { bytes key = 1; bytes value = 2; }
+message KvPutResponse { uint64 record_id = 1; }
+message KvDeleteRequest { bytes key = 1; }
+message KvDeleteResponse { bool ok = 1; }

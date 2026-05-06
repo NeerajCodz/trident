@@ -16,10 +16,12 @@ pub mod errors;
 pub mod formats;
 pub mod index;
 pub mod io;
+pub mod kernel;
 pub mod maintenance;
 pub mod manifest;
 pub mod memory;
 pub mod metrics;
+pub mod query;
 pub mod recovery;
 pub mod segments;
 pub mod server;
@@ -31,14 +33,17 @@ pub mod types;
 pub mod values;
 pub mod wal;
 
+pub use config::{CompactionStrategy, Compression, TridentConfig, WalSyncPolicy};
 pub use engine::TridentEngine;
 pub use engine::r#async::AsyncTridentEngine;
 pub use errors::{Result, TridentError};
-pub use store::RecordId;
-pub use types::ColumnFamily;
-pub use config::{TridentConfig, Compression, CompactionStrategy, WalSyncPolicy};
-pub use transactions::WriteBatch;
+pub use index::IndexPlugin;
+pub use index::{
+    AdjacencyIndex, BTreeIndex, BitmapIndex, BoundingBox, HnswIndex, InvertedIndex, IvfFlatIndex,
+    PackedRTreeIndex, TimePartition,
+};
 pub use maintenance::{JobPriority, MaintenanceRuntimeConfig, RuntimeLaneConfig};
 pub use storage::lsm::LsmIndex;
-pub use index::{BTreeIndex, HnswIndex, AdjacencyIndex};
-pub use index::IndexPlugin;
+pub use store::RecordId;
+pub use transactions::WriteBatch;
+pub use types::ColumnFamily;

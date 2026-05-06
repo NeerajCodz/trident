@@ -7,9 +7,10 @@
 //! - Corruption detection and recovery helpers
 
 pub mod binary;
+pub mod codecs;
 
-use std::io::{self, Read, Write};
 use crc32fast::Hasher as Crc32Hasher;
+use std::io::{self, Read, Write};
 
 /// Magic number identifying Trident index files: "TRID" (0x54524944)
 pub const TRIDENT_MAGIC: u32 = 0x54524944;
@@ -108,22 +109,19 @@ impl FormatHeader {
         }
 
         let index_type_u32 = u32::from_le_bytes([bytes[6], bytes[7], bytes[8], bytes[9]]);
-        let index_type =
-            IndexType::from_u32(index_type_u32).ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("Invalid index type: {}", index_type_u32),
-                )
-            })?;
+        let index_type = IndexType::from_u32(index_type_u32).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Invalid index type: {}", index_type_u32),
+            )
+        })?;
 
         let crc32 = u32::from_le_bytes([bytes[10], bytes[11], bytes[12], bytes[13]]);
         let metadata_offset = u64::from_le_bytes([
-            bytes[14], bytes[15], bytes[16], bytes[17], bytes[18], bytes[19], bytes[20],
-            bytes[21],
+            bytes[14], bytes[15], bytes[16], bytes[17], bytes[18], bytes[19], bytes[20], bytes[21],
         ]);
         let timestamp = u64::from_le_bytes([
-            bytes[22], bytes[23], bytes[24], bytes[25], bytes[26], bytes[27], bytes[28],
-            bytes[29],
+            bytes[22], bytes[23], bytes[24], bytes[25], bytes[26], bytes[27], bytes[28], bytes[29],
         ]);
         let reserved = u16::from_le_bytes([bytes[30], bytes[31]]);
 
@@ -297,8 +295,14 @@ impl<R: Read> BinaryReader<R> {
     pub fn read_u64(&mut self) -> io::Result<u64> {
         self.read_exact(8)?;
         Ok(u64::from_le_bytes([
-            self.buffer[0], self.buffer[1], self.buffer[2], self.buffer[3], self.buffer[4],
-            self.buffer[5], self.buffer[6], self.buffer[7],
+            self.buffer[0],
+            self.buffer[1],
+            self.buffer[2],
+            self.buffer[3],
+            self.buffer[4],
+            self.buffer[5],
+            self.buffer[6],
+            self.buffer[7],
         ]))
     }
 
@@ -381,7 +385,7 @@ mod tests {
         let data = vec![
             123, 45, 0, 0, // u32 = 11643
             200, 10, 0, 0, 0, 0, 0, 0, // u64
-            50, 0, // u16 = 50
+            50, 0,  // u16 = 50
             99, // u8
         ];
 

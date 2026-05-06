@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 pub struct InvertedIndex {
     name: String,
     terms: BTreeMap<Vec<u8>, BTreeSet<RecordId>>,
+    field_terms: BTreeMap<(String, Vec<u8>), BTreeSet<RecordId>>,
 }
 
 impl InvertedIndex {
@@ -14,6 +15,7 @@ impl InvertedIndex {
         Self {
             name: name.into(),
             terms: BTreeMap::new(),
+            field_terms: BTreeMap::new(),
         }
     }
 
@@ -23,12 +25,43 @@ impl InvertedIndex {
         }
     }
 
+    pub fn index_field_text(&mut self, field: impl Into<String>, text: &str, rid: RecordId) {
+        let field = normalize(&field.into());
+        for term in tokenize(text) {
+            self.terms.entry(term.clone()).or_default().insert(rid);
+            self.field_terms
+                .entry((field.clone(), term))
+                .or_default()
+                .insert(rid);
+        }
+    }
+
     pub fn search(&self, term: &str) -> Vec<RecordId> {
         let term = normalize(term);
         self.terms
             .get(term.as_bytes())
             .map(|set| set.iter().copied().collect())
             .unwrap_or_default()
+    }
+
+    pub fn search_field(&self, field: &str, term: &str) -> Vec<RecordId> {
+        let key = (normalize(field), normalize(term).into_bytes());
+        self.field_terms
+            .get(&key)
+            .map(|set| set.iter().copied().collect())
+            .unwrap_or_default()
+    }
+
+    pub fn postings(&self, term: &str) -> Vec<RecordId> {
+        self.search(term)
+    }
+
+    pub fn field_postings(&self, field: &str, term: &str) -> Vec<RecordId> {
+        self.search_field(field, term)
+    }
+
+    pub fn term_dictionary(&self) -> Vec<Vec<u8>> {
+        self.terms.keys().cloned().collect()
     }
 }
 
@@ -52,7 +85,10 @@ impl IndexPlugin for InvertedIndex {
     }
 
     fn delete(&mut self, key: &[u8]) -> Result<()> {
-        self.terms.remove(&normalize_bytes(key));
+        let term = normalize_bytes(key);
+        self.terms.remove(&term);
+        self.field_terms
+            .retain(|(_, field_term), _| field_term != &term);
         Ok(())
     }
 
@@ -63,7 +99,12 @@ impl IndexPlugin for InvertedIndex {
     fn stats(&self) -> IndexStats {
         IndexStats {
             live_keys: self.terms.len() as u64,
-            versions: self.terms.values().map(|set| set.len() as u64).sum(),
+            versions: self
+                .terms
+                .values()
+                .chain(self.field_terms.values())
+                .map(|set| set.len() as u64)
+                .sum(),
         }
     }
 }

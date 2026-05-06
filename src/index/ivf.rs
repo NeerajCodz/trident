@@ -1,5 +1,6 @@
 use crate::accel::gpu::kernels::squared_l2_distance;
 use crate::store::RecordId;
+use std::collections::BTreeSet;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct VectorEntry {
@@ -31,6 +32,25 @@ impl IvfFlatIndex {
     }
 
     pub fn search_exact(&self, query: &[f32], limit: usize) -> Vec<(RecordId, f32)> {
+        self.search_exact_by(query, limit, |_| true)
+    }
+
+    pub fn search_exact_filtered(
+        &self,
+        query: &[f32],
+        limit: usize,
+        allowed: &[RecordId],
+    ) -> Vec<(RecordId, f32)> {
+        let allowed: BTreeSet<_> = allowed.iter().copied().collect();
+        self.search_exact_by(query, limit, |rid| allowed.contains(&rid))
+    }
+
+    pub fn search_exact_by(
+        &self,
+        query: &[f32],
+        limit: usize,
+        mut predicate: impl FnMut(RecordId) -> bool,
+    ) -> Vec<(RecordId, f32)> {
         if query.len() != self.dimension {
             return Vec::new();
         }
@@ -38,6 +58,7 @@ impl IvfFlatIndex {
             .lists
             .iter()
             .flatten()
+            .filter(|entry| predicate(entry.rid))
             .filter_map(|entry| {
                 squared_l2_distance(&entry.vector, query).map(|score| (entry.rid, score))
             })

@@ -11,7 +11,7 @@ mod phase3b_integration {
         WorkloadPattern, WriteAmplificationTracker,
     };
     use trident::bench_advanced::{BenchmarkResult, BenchmarkSuite};
-    use trident::index::LsmIndex;
+    use trident::storage::lsm::LsmIndex;
     use trident::store::{IndexInsert, StorageEngine};
     use std::sync::Arc;
     use std::thread;

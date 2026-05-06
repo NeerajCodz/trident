@@ -6,7 +6,7 @@ use crate::maintenance::{MaintenanceRuntimeController, MaintenanceScheduler};
 use crate::manifest::Manifest;
 use crate::manifest::ManifestStore;
 use crate::metrics::EngineMetrics;
-use crate::ram::{MemTable, SnapshotManager};
+use crate::memory::{MemTable, SnapshotManager};
 use crate::types::{ColumnFamily, Key, ValueRef, VersionedValue};
 use crate::wal::Wal;
 use parking_lot::{Condvar, Mutex};

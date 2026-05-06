@@ -8,7 +8,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 use tempfile::tempdir;
-use trident::index::{AdjacencyIndex, BTreeIndex, HnswIndex, IndexPlugin, LsmIndex};
+use trident::index::{AdjacencyIndex, BTreeIndex, HnswIndex, IndexPlugin};
+use trident::storage::lsm::LsmIndex;
 use trident::store::{
     IndexInsert, MaintenanceCycleOptions, RecordId, RecordStore, SharedStorageEngine,
     StorageEngine, StorageMaintenanceRuntimeConfig, StorageMaintenanceRuntimeController,
@@ -333,6 +334,8 @@ fn lsm_bloom_and_fence_metadata_survive_reopen() {
     assert!(lsm.may_contain_key(b"k2"));
     assert!(!lsm.may_contain_key(b"k3"));
     let (min, max) = lsm.fence_bounds();
+    let min: Option<Vec<u8>> = min;
+    let max: Option<Vec<u8>> = max;
     assert_eq!(min.unwrap(), b"k1".to_vec());
     assert_eq!(max.unwrap(), b"k2".to_vec());
 }

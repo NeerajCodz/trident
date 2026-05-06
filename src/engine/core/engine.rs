@@ -12,7 +12,7 @@ use crate::manifest::{
     ManifestStore,
 };
 use crate::metrics::EngineMetrics;
-use crate::ram::{MemTable, SnapshotManager};
+use crate::memory::{MemTable, SnapshotManager};
 use crate::recovery::{GcReport, RecoveryReport, write_checkpoint_with_policy};
 use crate::segments::{SegmentReader, SegmentWriteOptions, SegmentWriter};
 use crate::slog;

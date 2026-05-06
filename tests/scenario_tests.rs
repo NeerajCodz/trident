@@ -9,7 +9,8 @@
 use std::sync::Arc;
 use std::thread;
 use tempfile::tempdir;
-use trident::index::{BTreeIndex, LsmIndex};
+use trident::index::BTreeIndex;
+use trident::storage::lsm::LsmIndex;
 use trident::store::{IndexInsert, StorageEngine};
 
 // ──────────────────────────────────────────────

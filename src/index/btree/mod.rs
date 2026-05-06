@@ -1,5 +1,7 @@
 //! B-tree-style index: `column_value → RecordId` with sequence-aware snapshots.
 
+pub mod binary;
+
 use super::{IndexPlugin, IndexStats};
 use crate::errors::{Result, TridentError};
 use crate::io::{BinaryReader, BinaryWriter, crc32c};

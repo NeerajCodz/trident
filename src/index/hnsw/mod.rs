@@ -4,6 +4,9 @@
 //! bounded-degree small-world links with layered navigation and persisted
 //! graph state.
 
+pub mod binary;
+pub mod adjacency;
+
 use crate::errors::{Result, TridentError};
 use crate::io::{BinaryReader, BinaryWriter, crc32c};
 use crate::store::RecordId;

@@ -110,7 +110,7 @@ impl TridentEngine {
         self.inner.snapshots.snapshot()
     }
 
-    pub fn pin_snapshot(&self) -> crate::ram::PinnedSnapshot {
+    pub fn pin_snapshot(&self) -> crate::memory::PinnedSnapshot {
         self.inner.snapshots.pin()
     }
 }

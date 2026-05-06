@@ -1,5 +1,5 @@
 use crate::manifest::ColumnFamilyDescriptor;
-use crate::server::{RestServerConfig, serve_rest};
+use crate::api::server::{RestServerConfig, serve_rest};
 use crate::{ColumnFamily, Result, TridentConfig, TridentEngine};
 use bytes::Bytes;
 use clap::{Parser, Subcommand};

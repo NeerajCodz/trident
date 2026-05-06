@@ -10,15 +10,12 @@
 //! This guarantees that each value is stored on disk exactly once,
 //! regardless of how many index plugins reference it simultaneously.
 
-pub mod adjacency;
 pub mod btree;
 pub mod hnsw;
-pub mod lsm;
 
-pub use adjacency::AdjacencyIndex;
 pub use btree::BTreeIndex;
 pub use hnsw::HnswIndex;
-pub use lsm::LsmIndex;
+pub use hnsw::adjacency::AdjacencyIndex;
 
 use crate::errors::Result;
 use crate::store::RecordId;

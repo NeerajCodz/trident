@@ -5,7 +5,8 @@
 
 use std::time::{Duration, Instant};
 use tempfile::tempdir;
-use trident::index::{BTreeIndex, LsmIndex};
+use trident::index::BTreeIndex;
+use trident::storage::lsm::LsmIndex;
 use trident::store::{IndexInsert, RecordId, StorageEngine};
 
 // ─────────────────────────────────────────

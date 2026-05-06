@@ -1,0 +1,149 @@
+=================================================================
+IMPORT PATH MAPPING AUDIT - PHASE 7
+Scanned: Complete Rust Codebase (*.rs files)
+=================================================================
+
+MAPPING 1: LSM Module Migration
+=================================================================
+OLD PATH:   use crate::index::lsm::
+NEW PATH:   use crate::storage::lsm::
+FILES AFFECTED: None found
+TOTAL OCCURRENCES: 0
+
+MAPPING 2: BTREE Module (No Change)
+=================================================================
+OLD PATH:   use crate::index::btree::
+NEW PATH:   use crate::index::btree:: (STAYS THE SAME)
+FILES AFFECTED: None found
+TOTAL OCCURRENCES: 0
+
+MAPPING 3: Adjacency Module Migration to HNSW
+=================================================================
+OLD PATH:   use crate::index::adjacency::
+NEW PATH:   use crate::index::hnsw::adjacency::
+FILES AFFECTED: None found
+TOTAL OCCURRENCES: 0
+
+MAPPING 4: HNSW Module (No Change - Already in New Location)
+=================================================================
+OLD PATH:   use crate::index::hnsw::
+NEW PATH:   use crate::index::hnsw:: (STAYS THE SAME)
+FILES AFFECTED: None found
+TOTAL OCCURRENCES: 0
+
+MAPPING 5: Indexes Module Migration
+=================================================================
+OLD PATH:   use crate::engine::indexes::
+NEW PATH:   use crate::storage::lsm:: OR use crate::index::{btree,hnsw}::
+FILES AFFECTED: None found
+TOTAL OCCURRENCES: 0
+
+MAPPING 6: Binary Formats Module (Scope Change)
+=================================================================
+OLD PATH:   use crate::formats::binary::
+NEW PATH:   use crate::formats:: (keep as-is, binary is internal detail)
+CURRENT USAGE (use crate::formats::):
+  - .\src\formats\binary\lsm.rs (2 occurrences: line 8, 165)
+  - .\src\formats\binary\hnsw.rs (2 occurrences: line 8, 190)
+  - .\src\formats\binary\btree.rs (2 occurrences: line 8, 175)
+  - .\src\formats\binary\adjacency.rs (2 occurrences: line 8, 179)
+  - .\src\engine\indexes\hnsw\adjacency\binary\mod.rs (2 occurrences: line 8, 179)
+  - .\src\engine\indexes\btree\binary\mod.rs (2 occurrences: line 8, 175)
+  - .\src\engine\indexes\hnsw\binary\mod.rs (2 occurrences: line 8, 190)
+  - .\src\engine\indexes\lsm\binary\mod.rs (2 occurrences: line 8, 165)
+  - .\src\index\hnsw\binary\mod.rs (2 occurrences: line 8, 190)
+  - .\src\index\hnsw\adjacency\binary\adjacency.rs (2 occurrences: line 8, 179)
+  - .\src\index\hnsw\adjacency\binary\mod.rs (2 occurrences: line 8, 179)
+  - .\src\index\btree\binary\mod.rs (2 occurrences: line 8, 175)
+  - .\src\storage\lsm\binary\mod.rs (2 occurrences: line 8, 165)
+TOTAL OCCURRENCES: 26
+
+MAPPING 7: CLI Module Migration
+=================================================================
+OLD PATH:   use crate::cli::
+NEW PATH:   use crate::api::cli::
+FILES AFFECTED: None found
+TOTAL OCCURRENCES: 0
+
+MAPPING 8: Server Module Migration
+=================================================================
+OLD PATH:   use crate::server::
+NEW PATH:   use crate::api::server::
+FILES AFFECTED: .\src\cli\commands.rs (1 occurrence: line 2)
+  - use crate::server::{RestServerConfig, serve_rest};
+TOTAL OCCURRENCES: 1
+
+MAPPING 9: RAM Module Migration to Memory
+=================================================================
+OLD PATH:   use crate::ram::
+NEW PATH:   use crate::memory::
+FILES AFFECTED:
+  - .\src\engine\core\state.rs (1 occurrence: line 9)
+    use crate::ram::{MemTable, SnapshotManager};
+  - .\src\engine\core\engine.rs (1 occurrence: line 15)
+    use crate::ram::{MemTable, SnapshotManager};
+TOTAL OCCURRENCES: 2
+
+MAPPING 10: Non-use Statement References (crate::ram)
+=================================================================
+OLD PATH:   crate::ram::
+NEW PATH:   crate::memory::
+FILES AFFECTED:
+  - .\src\engine\read\scan.rs (1 occurrence: line 113)
+    pub fn pin_snapshot(&self) -> crate::ram::PinnedSnapshot {
+TOTAL OCCURRENCES: 1
+
+=================================================================
+SUMMARY OF REQUIRED CHANGES
+=================================================================
+
+PRIORITY 1 - Critical Imports (Must be updated):
+  Total files needing changes: 4 files
+  Total import statements: 4 statements
+  
+  Files:
+    1. .\src\cli\commands.rs (1 change)
+       - use crate::server:: → use crate::api::server::
+    
+    2. .\src\engine\core\state.rs (1 change)
+       - use crate::ram:: → use crate::memory::
+    
+    3. .\src\engine\core\engine.rs (1 change)
+       - use crate::ram:: → use crate::memory::
+    
+    4. .\src\engine\read\scan.rs (1 change)
+       - crate::ram:: → crate::memory:: (in return type annotation)
+
+PRIORITY 2 - Formats Module (13 files, 26 occurrences):
+  Status: These imports appear to be INTERNAL and likely won't change
+  The pattern "use crate::formats::" remains the same
+  No action needed for these imports
+
+PATTERNS NOT FOUND (Already migrated or not in codebase):
+  - use crate::index::lsm:: (0 occurrences)
+  - use crate::index::btree:: (0 occurrences)
+  - use crate::index::adjacency:: (0 occurrences)
+  - use crate::index::hnsw:: (0 occurrences)
+  - use crate::engine::indexes:: (0 occurrences)
+  - use crate::cli:: (0 occurrences)
+
+=================================================================
+NOTES
+=================================================================
+
+1. Most imports to be migrated in Phase 2-3 appear to already be
+   in their new locations or the modules have been renamed already.
+
+2. The most critical changes are:
+   - .\src\cli\commands.rs: server → api::server
+   - .\src\engine\core\*.rs: ram → memory (2 files)
+   - .\src\engine\read\scan.rs: ram → memory (non-use reference)
+
+3. The formats module imports are widespread but appear to be
+   using the parent crate::formats:: module, which should remain
+   unchanged. These reference internal binary serialization code.
+
+4. Total actionable changes: 4 imports + 1 type reference = 5 items
+   across 4 unique files
+
+=================================================================

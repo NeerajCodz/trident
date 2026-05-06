@@ -2,7 +2,6 @@ pub mod admin;
 pub mod r#async;
 pub mod compaction;
 pub mod core;
-pub mod indexes;
 pub mod read;
 pub mod write;
 

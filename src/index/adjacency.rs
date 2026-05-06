@@ -8,7 +8,8 @@
 //! Edges are directed.  Bi-directional links require two calls to
 //! [`AdjacencyIndex::add_edge`] (one for each direction).
 
-use crate::errors::Result;
+use crate::errors::{Result, TridentError};
+use crate::io::{BinaryReader, BinaryWriter, crc32c};
 use crate::store::RecordId;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -27,6 +28,9 @@ pub struct Edge {
 struct OnDisk {
     adjacency: HashMap<u64, Vec<Edge>>,
 }
+
+const ADJ_SNAPSHOT_MAGIC: u32 = 0x4144_4a32;
+const ADJ_SNAPSHOT_VERSION: u8 = 1;
 
 /// Adjacency-list index for graph workloads.
 ///
@@ -50,7 +54,11 @@ impl AdjacencyIndex {
         let path = Self::snapshot_path(&dir, &name);
         let adjacency = if path.exists() {
             let bytes = std::fs::read(&path)?;
-            let on_disk: OnDisk = serde_json::from_slice(&bytes)?;
+            let on_disk: OnDisk = if looks_like_binary_snapshot(&bytes) {
+                decode_binary_snapshot(&bytes, &path)?
+            } else {
+                serde_json::from_slice(&bytes)?
+            };
             on_disk.adjacency
         } else {
             HashMap::new()
@@ -130,8 +138,94 @@ impl AdjacencyIndex {
         let on_disk = OnDisk {
             adjacency: self.adjacency.clone(),
         };
-        let bytes = serde_json::to_vec(&on_disk)?;
+        let bytes = encode_binary_snapshot(&on_disk);
         std::fs::write(Self::snapshot_path(&self.dir, &self.name), bytes)?;
         Ok(())
     }
+}
+
+fn looks_like_binary_snapshot(bytes: &[u8]) -> bool {
+    if bytes.len() < 4 {
+        return false;
+    }
+    u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) == ADJ_SNAPSHOT_MAGIC
+}
+
+fn encode_binary_snapshot(on_disk: &OnDisk) -> Vec<u8> {
+    let mut payload = BinaryWriter::new();
+    let mut nodes: Vec<(&u64, &Vec<Edge>)> = on_disk.adjacency.iter().collect();
+    nodes.sort_by_key(|(rid, _)| **rid);
+    payload.write_u32(nodes.len() as u32);
+    for (rid, edges) in nodes {
+        payload.write_u64(*rid);
+        payload.write_u32(edges.len() as u32);
+        for edge in edges {
+            payload.write_u64(edge.to.0);
+            payload.write_len_bytes(&edge.label);
+        }
+    }
+    let payload = payload.into_inner();
+    let mut out = BinaryWriter::new();
+    out.write_u32(ADJ_SNAPSHOT_MAGIC);
+    out.write_u8(ADJ_SNAPSHOT_VERSION);
+    out.write_u32(payload.len() as u32);
+    out.write_u32(crc32c(&payload));
+    out.write_bytes(&payload);
+    out.into_inner()
+}
+
+fn decode_binary_snapshot(bytes: &[u8], source: &Path) -> Result<OnDisk> {
+    if bytes.len() < 13 {
+        return Err(TridentError::Corrupt {
+            path: source.to_path_buf(),
+            reason: "truncated adjacency snapshot header".to_string(),
+        });
+    }
+    let magic = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+    if magic != ADJ_SNAPSHOT_MAGIC {
+        return Err(TridentError::Corrupt {
+            path: source.to_path_buf(),
+            reason: "bad adjacency snapshot magic".to_string(),
+        });
+    }
+    if bytes[4] != ADJ_SNAPSHOT_VERSION {
+        return Err(TridentError::Corrupt {
+            path: source.to_path_buf(),
+            reason: format!("unsupported adjacency snapshot version {}", bytes[4]),
+        });
+    }
+    let payload_len = u32::from_le_bytes([bytes[5], bytes[6], bytes[7], bytes[8]]) as usize;
+    let expected_crc = u32::from_le_bytes([bytes[9], bytes[10], bytes[11], bytes[12]]);
+    if bytes.len() < 13 + payload_len {
+        return Err(TridentError::Corrupt {
+            path: source.to_path_buf(),
+            reason: "truncated adjacency snapshot payload".to_string(),
+        });
+    }
+    let payload = &bytes[13..13 + payload_len];
+    let actual_crc = crc32c(payload);
+    if actual_crc != expected_crc {
+        return Err(TridentError::Corrupt {
+            path: source.to_path_buf(),
+            reason: format!(
+                "adjacency snapshot checksum mismatch: expected {expected_crc:#010x}, got {actual_crc:#010x}"
+            ),
+        });
+    }
+    let mut reader = BinaryReader::new(payload, source.to_path_buf());
+    let node_count = reader.read_u32()? as usize;
+    let mut adjacency = HashMap::with_capacity(node_count);
+    for _ in 0..node_count {
+        let from = reader.read_u64()?;
+        let edge_count = reader.read_u32()? as usize;
+        let mut edges = Vec::with_capacity(edge_count);
+        for _ in 0..edge_count {
+            edges.push(Edge {
+                to: RecordId(reader.read_u64()?),
+                label: reader.read_len_bytes()?,
+            });
+        }
+        adjacency.insert(from, edges);
+    }
+    Ok(OnDisk { adjacency })
 }

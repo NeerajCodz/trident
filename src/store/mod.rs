@@ -11,6 +11,7 @@ mod engine;
 mod indirection;
 mod manifest;
 mod record_id;
+mod runtime;
 mod segment;
 mod wal;
 
@@ -22,8 +23,12 @@ pub use engine::{
 pub use indirection::{IndirectionTable, PhysicalLocation};
 pub use manifest::{StorageManifest, StorageManifestStore};
 pub use record_id::RecordId;
+pub use runtime::{
+    SharedStorageEngine, StorageMaintenanceRuntimeConfig, StorageMaintenanceRuntimeController,
+    StorageMaintenanceRuntimeStatus,
+};
 pub use segment::RecordSegment;
-pub use wal::{StorageWal, StorageWalEntry, StorageWalOperation};
+pub use wal::{StorageWal, StorageWalEntry, StorageWalOperation, StorageWalOptions};
 
 use crate::errors::Result;
 use std::collections::HashSet;

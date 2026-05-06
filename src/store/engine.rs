@@ -1,5 +1,5 @@
 use super::manifest::{StorageManifest, StorageManifestStore};
-use super::wal::{StorageWal, StorageWalEntry, StorageWalOperation};
+use super::wal::{StorageWal, StorageWalEntry, StorageWalOperation, StorageWalOptions};
 use super::{CompactionStats, RecordId, RecordStore};
 use crate::cache::BlockCache;
 use crate::errors::{Result, TridentError};
@@ -128,7 +128,7 @@ pub struct MaintenanceCycleReport {
     pub executed: Vec<IndexCompactionReport>,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct StorageEngineStats {
     pub manifest_version: u64,
     pub last_sequence: u64,
@@ -141,6 +141,23 @@ pub struct StorageEngineStats {
     pub last_compacted_at_sequence: HashMap<String, u64>,
     pub maintenance_cycles_run: u64,
     pub last_maintenance_at_sequence: Option<u64>,
+    // Latency metrics (microseconds)
+    pub read_latency_p50_us: u64,
+    pub read_latency_p95_us: u64,
+    pub read_latency_p99_us: u64,
+    pub write_latency_p50_us: u64,
+    pub write_latency_p95_us: u64,
+    pub write_latency_p99_us: u64,
+    pub compaction_latency_p50_us: u64,
+    pub compaction_latency_p95_us: u64,
+    // Throughput metrics
+    pub reads_per_sec: f64,
+    pub writes_per_sec: f64,
+    pub wal_bytes_per_sec: f64,
+    // Amplification metrics
+    pub read_amplification: f64,
+    pub write_amplification: f64,
+    pub space_amplification: f64,
 }
 
 impl StorageEngine {
@@ -159,6 +176,46 @@ impl StorageEngine {
         let store = RecordStore::open(root.join(Self::PRIMARY_DIR))?;
         let wal_path = root.join(Self::WAL_DIR).join(Self::WAL_FILE);
         let wal = StorageWal::open(&wal_path)?;
+        let replay_entries = StorageWal::replay(&wal_path)?;
+
+        let manifest_store = StorageManifestStore::new(root.join(Self::MANIFEST_FILE));
+        let mut manifest = manifest_store.load_or_create()?;
+        manifest.last_sequence = replay_entries
+            .iter()
+            .map(|entry| entry.sequence)
+            .max()
+            .unwrap_or(manifest.last_sequence);
+        let pending_replay = replay_entries
+            .into_iter()
+            .filter(|entry| entry.index_type != "primary")
+            .collect();
+
+        Ok(Self {
+            root,
+            store,
+            wal,
+            manifest_store,
+            manifest,
+            indexes: HashMap::new(),
+            pending_replay,
+            cache: UnifiedBlockCache::new(cache_capacity_bytes),
+            compaction_budget_bytes: 0,
+        })
+    }
+
+    pub fn open_with_wal_options(
+        root: impl Into<PathBuf>,
+        cache_capacity_bytes: usize,
+        wal_options: StorageWalOptions,
+    ) -> Result<Self> {
+        let root = root.into();
+        std::fs::create_dir_all(&root)?;
+        std::fs::create_dir_all(root.join(Self::INDEX_DIR))?;
+        std::fs::create_dir_all(root.join(Self::WAL_DIR))?;
+
+        let store = RecordStore::open(root.join(Self::PRIMARY_DIR))?;
+        let wal_path = root.join(Self::WAL_DIR).join(Self::WAL_FILE);
+        let wal = StorageWal::open_with_options(&wal_path, wal_options)?;
         let replay_entries = StorageWal::replay(&wal_path)?;
 
         let manifest_store = StorageManifestStore::new(root.join(Self::MANIFEST_FILE));
@@ -392,6 +449,23 @@ impl StorageEngine {
             last_compacted_at_sequence: self.manifest.last_compacted_at_sequence.clone(),
             maintenance_cycles_run: self.manifest.maintenance_cycles_run,
             last_maintenance_at_sequence: self.manifest.last_maintenance_at_sequence,
+            // Default latency metrics (0 = no data collected yet)
+            read_latency_p50_us: 0,
+            read_latency_p95_us: 0,
+            read_latency_p99_us: 0,
+            write_latency_p50_us: 0,
+            write_latency_p95_us: 0,
+            write_latency_p99_us: 0,
+            compaction_latency_p50_us: 0,
+            compaction_latency_p95_us: 0,
+            // Default throughput metrics
+            reads_per_sec: 0.0,
+            writes_per_sec: 0.0,
+            wal_bytes_per_sec: 0.0,
+            // Default amplification metrics
+            read_amplification: 0.0,
+            write_amplification: 0.0,
+            space_amplification: 0.0,
         }
     }
 

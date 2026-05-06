@@ -1,7 +1,8 @@
-use trident::RecordId;
+use trident::index::hnsw::adjacency::AdjacencyIndex;
 use trident::kernel::ExecutionMode;
-use trident::query::graph::GraphTraversal;
-use trident::query::{QueryModel, plan};
+use trident::query::graph::{traverse, GraphTraversal};
+use trident::query::{plan, QueryModel};
+use trident::RecordId;
 
 #[test]
 fn graph_plans_to_adjacency_path() {
@@ -19,4 +20,61 @@ fn graph_traversal_request_is_stable() {
     };
     assert_eq!(traversal.start, RecordId(7));
     assert_eq!(traversal.max_depth, 3);
+}
+
+#[test]
+fn graph_traversal_cursor_walks_breadth_first_with_label_filter() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut index = AdjacencyIndex::open("graph", dir.path()).unwrap();
+    index.add_edge(RecordId(1), b"knows", RecordId(2)).unwrap();
+    index.add_edge(RecordId(1), b"likes", RecordId(9)).unwrap();
+    index.add_edge(RecordId(2), b"knows", RecordId(3)).unwrap();
+    index.add_edge(RecordId(3), b"knows", RecordId(1)).unwrap();
+
+    let hits = traverse(
+        &index,
+        &GraphTraversal {
+            start: RecordId(1),
+            max_depth: 2,
+            edge_label: Some("knows".into()),
+        },
+    );
+
+    assert_eq!(
+        hits,
+        vec![
+            trident::query::graph::GraphTraversalHit {
+                record_id: RecordId(1),
+                depth: 0
+            },
+            trident::query::graph::GraphTraversalHit {
+                record_id: RecordId(2),
+                depth: 1
+            },
+            trident::query::graph::GraphTraversalHit {
+                record_id: RecordId(3),
+                depth: 2
+            }
+        ]
+    );
+}
+
+#[test]
+fn graph_traversal_reflects_deleted_edges() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut index = AdjacencyIndex::open("graph", dir.path()).unwrap();
+    index.add_edge(RecordId(1), b"knows", RecordId(2)).unwrap();
+    index.remove_edges(RecordId(1), RecordId(2));
+
+    let hits = traverse(
+        &index,
+        &GraphTraversal {
+            start: RecordId(1),
+            max_depth: 1,
+            edge_label: None,
+        },
+    );
+
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].record_id, RecordId(1));
 }

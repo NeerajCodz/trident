@@ -17,7 +17,14 @@ fn gpu_backends_match_cpu_results_without_hardware() {
     ] {
         let gpu = GpuAccelerator::new(backend);
         assert_eq!(gpu.crc32c(input), cpu.crc32c(input));
-        assert_eq!(gpu.compare_keys(b"k1", b"k2"), cpu.compare_keys(b"k1", b"k2"));
+        assert_eq!(
+            gpu.compare_keys(b"k1", b"k2"),
+            cpu.compare_keys(b"k1", b"k2")
+        );
+        assert_eq!(
+            gpu.columnar_eq_offsets(&[b"a".as_slice(), b"b".as_slice(), b"a".as_slice()], b"a"),
+            cpu.columnar_eq_offsets(&[b"a".as_slice(), b"b".as_slice(), b"a".as_slice()], b"a")
+        );
 
         let encoded = gpu.encode_block(Compression::Zstd, input).unwrap();
         let decoded = gpu.decode_block(Compression::Zstd, &encoded).unwrap();

@@ -42,4 +42,23 @@ pub trait Accelerator: Send + Sync {
             })
             .collect()
     }
+
+    fn columnar_eq_mask(&self, values: &[&[u8]], needle: &[u8]) -> Vec<bool> {
+        values.iter().map(|value| *value == needle).collect()
+    }
+
+    fn columnar_eq_offsets(&self, values: &[&[u8]], needle: &[u8]) -> Vec<usize> {
+        self.columnar_eq_mask(values, needle)
+            .into_iter()
+            .enumerate()
+            .filter_map(|(offset, matched)| matched.then_some(offset))
+            .collect()
+    }
+
+    fn columnar_u64_range_mask(&self, values: &[u64], min: u64, max: u64) -> Vec<bool> {
+        values
+            .iter()
+            .map(|value| (min..=max).contains(value))
+            .collect()
+    }
 }

@@ -22,3 +22,19 @@ fn cpu_accelerator_orders_keys_and_checksums() {
     assert_eq!(accel.crc32c(b"same"), accel.crc32c(b"same"));
     assert_ne!(accel.crc32c(b"left"), accel.crc32c(b"right"));
 }
+
+#[test]
+fn cpu_accelerator_filters_columnar_predicates() {
+    let accel = CpuAccelerator;
+    let values: Vec<&[u8]> = vec![b"open", b"closed", b"open", b"pending"];
+
+    assert_eq!(
+        accel.columnar_eq_mask(&values, b"open"),
+        vec![true, false, true, false]
+    );
+    assert_eq!(accel.columnar_eq_offsets(&values, b"open"), vec![0, 2]);
+    assert_eq!(
+        accel.columnar_u64_range_mask(&[1, 5, 10, 20], 5, 10),
+        vec![false, true, true, false]
+    );
+}

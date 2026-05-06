@@ -365,6 +365,6 @@ mod tests {
         let regressions = current.compare(&baseline);
         assert!(!regressions.is_empty());
         assert_eq!(regressions[0].benchmark_name, "read_test");
-        assert!(regressions[0].metrics.len() > 0);
+        assert!(!regressions[0].metrics.is_empty());
     }
 }

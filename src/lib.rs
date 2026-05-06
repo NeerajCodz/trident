@@ -1,4 +1,6 @@
 pub mod accel;
+pub mod bench;
+pub mod bench_advanced;
 pub mod cache;
 pub mod cli;
 pub mod config;

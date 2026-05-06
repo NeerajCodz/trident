@@ -97,6 +97,11 @@ name = "durability_format_codec"
 path = "benches/durability/format_codec_bench.rs"
 harness = false
 
+[[bench]]
+name = "accel_simd"
+path = "benches/accel/simd_accel_bench.rs"
+harness = false
+
 [[test]]
 name = "engine_smoke"
 path = "tests/engine/smoke_test.rs"
@@ -156,6 +161,10 @@ path = "tests/search/inverted_test.rs"
 [[test]]
 name = "geo_spatial_time"
 path = "tests/geo/spatial_time_test.rs"
+
+[[test]]
+name = "accel_simd"
+path = "tests/accel/simd_accel_test.rs"
 
 [[test]]
 name = "api_grpc_contracts"

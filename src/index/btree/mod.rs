@@ -1,6 +1,7 @@
 //! B-tree-style index: `column_value → RecordId` with sequence-aware snapshots.
 
 pub mod binary;
+pub mod page;
 
 use super::{IndexPlugin, IndexStats};
 use crate::errors::{Result, TridentError};

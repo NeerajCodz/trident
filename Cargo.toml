@@ -170,6 +170,10 @@ name = "durability_mvcc_model"
 path = "tests/durability/mvcc_model_test.rs"
 
 [[test]]
+name = "durability_tiered_storage"
+path = "tests/durability/tiered_storage_test.rs"
+
+[[test]]
 name = "sql_query_primitives"
 path = "tests/sql/query_primitives_test.rs"
 

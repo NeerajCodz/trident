@@ -150,6 +150,10 @@ name = "durability_format_codecs"
 path = "tests/durability/format_codec_test.rs"
 
 [[test]]
+name = "durability_replication_log"
+path = "tests/durability/replication_log_test.rs"
+
+[[test]]
 name = "sql_query_primitives"
 path = "tests/sql/query_primitives_test.rs"
 

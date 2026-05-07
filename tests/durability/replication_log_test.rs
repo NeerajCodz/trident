@@ -1,6 +1,7 @@
 use tempfile::tempdir;
 use trident::replication::{
     FileReplicationLog, LogPosition, ReplicationLog, ReplicationRecord, ReplicationRecordKind,
+    SnapshotTransferRecord,
 };
 use trident::store::RecordId;
 
@@ -55,4 +56,15 @@ fn file_replication_log_rejects_corrupted_committed_record() {
     std::fs::write(&path, bytes).unwrap();
 
     assert!(log.replay_from(LogPosition { sequence: 1 }).is_err());
+}
+
+#[test]
+fn replication_primitives_cover_snapshot_and_pitr_records() {
+    let snapshot = SnapshotTransferRecord::new(9, 1, false, b"chunk");
+    let record = ReplicationRecord::snapshot_chunk(10, b"chunk");
+    let boundary = ReplicationRecord::pitr_boundary(11, b"nightly");
+
+    assert_ne!(snapshot.checksum, 0);
+    assert_eq!(record.kind, ReplicationRecordKind::SnapshotChunk);
+    assert_eq!(boundary.kind, ReplicationRecordKind::PitrBoundary);
 }

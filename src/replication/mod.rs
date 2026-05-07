@@ -27,6 +27,8 @@ pub enum ReplicationRecordKind {
     Delete,
     Checkpoint,
     SnapshotChunk,
+    PitrBoundary,
+    AntiEntropyDigest,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -55,11 +57,79 @@ impl ReplicationRecord {
             payload: Vec::new(),
         }
     }
+
+    pub fn snapshot_chunk(sequence: u64, payload: impl Into<Vec<u8>>) -> Self {
+        Self {
+            position: LogPosition { sequence },
+            kind: ReplicationRecordKind::SnapshotChunk,
+            rid: None,
+            payload: payload.into(),
+        }
+    }
+
+    pub fn pitr_boundary(sequence: u64, label: impl Into<Vec<u8>>) -> Self {
+        Self {
+            position: LogPosition { sequence },
+            kind: ReplicationRecordKind::PitrBoundary,
+            rid: None,
+            payload: label.into(),
+        }
+    }
 }
 
 pub trait ReplicationLog {
     fn append(&mut self, record: &ReplicationRecord) -> Result<()>;
     fn replay_from(&self, position: LogPosition) -> Result<Vec<ReplicationRecord>>;
+}
+
+pub trait RaftReadyStore {
+    fn append_raft_entry(&mut self, term: u64, index: u64, payload: &[u8]) -> Result<LogPosition>;
+    fn read_raft_entries(&self, from_index: u64) -> Result<Vec<ReplicationRecord>>;
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SnapshotTransferRecord {
+    pub snapshot_id: u64,
+    pub chunk_id: u64,
+    pub final_chunk: bool,
+    pub checksum: u32,
+}
+
+impl SnapshotTransferRecord {
+    pub fn new(snapshot_id: u64, chunk_id: u64, final_chunk: bool, bytes: &[u8]) -> Self {
+        Self {
+            snapshot_id,
+            chunk_id,
+            final_chunk,
+            checksum: crc32c(bytes),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PitrBoundary {
+    pub sequence: u64,
+    pub label: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ReplicaCheckpoint {
+    pub replica_id: String,
+    pub durable_position: LogPosition,
+    pub snapshot_id: Option<u64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AntiEntropyDigest {
+    pub range_start: Vec<u8>,
+    pub range_end: Vec<u8>,
+    pub digest: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ZeroCopyReplicationBuffer {
+    pub position: LogPosition,
+    pub bytes: bytes::Bytes,
 }
 
 pub struct FileReplicationLog {
@@ -113,6 +183,8 @@ fn encode_record(record: &ReplicationRecord) -> Vec<u8> {
         ReplicationRecordKind::Delete => 2,
         ReplicationRecordKind::Checkpoint => 3,
         ReplicationRecordKind::SnapshotChunk => 4,
+        ReplicationRecordKind::PitrBoundary => 5,
+        ReplicationRecordKind::AntiEntropyDigest => 6,
     });
     match record.rid {
         Some(rid) => {
@@ -195,6 +267,8 @@ fn decode_record(payload: &[u8], path: &Path) -> Result<ReplicationRecord> {
         2 => ReplicationRecordKind::Delete,
         3 => ReplicationRecordKind::Checkpoint,
         4 => ReplicationRecordKind::SnapshotChunk,
+        5 => ReplicationRecordKind::PitrBoundary,
+        6 => ReplicationRecordKind::AntiEntropyDigest,
         tag => return corrupt(path, &format!("invalid replication record kind {tag}")),
     };
     let has_rid = reader.read_u8()?;

@@ -83,6 +83,11 @@ impl RecordSegment {
         Ok((record_offset, length))
     }
 
+    pub fn sync(&self) -> Result<()> {
+        self.file.sync_data()?;
+        Ok(())
+    }
+
     /// Read `length` bytes from `path` starting at `record_offset`.
     ///
     /// The layout at `record_offset` is:

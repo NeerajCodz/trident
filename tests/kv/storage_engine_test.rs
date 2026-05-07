@@ -1740,3 +1740,95 @@ fn fault_injection_skip_corrupted_wal_segment_continue_with_next() {
     }
     assert_eq!(reopened.fetch(final_rid).unwrap(), b"post-corruption-data");
 }
+
+#[test]
+fn primary_wal_replay_repairs_missing_record_directory() {
+    let dir = tempdir().unwrap();
+    let index_dir = dir.path().join("indexes");
+
+    let rid = {
+        let mut engine = StorageEngine::open(dir.path(), 1024 * 1024).unwrap();
+        engine
+            .register_index(
+                "kv",
+                "default",
+                Box::new(LsmIndex::open("kv", &index_dir).unwrap()),
+            )
+            .unwrap();
+        engine
+            .put(
+                b"directory-replay-value",
+                &[IndexInsert::new("kv", b"directory-key".to_vec())],
+            )
+            .unwrap()
+    };
+
+    std::fs::remove_file(dir.path().join("primary").join("indirection.tind")).unwrap();
+
+    let mut reopened = StorageEngine::open(dir.path(), 1024 * 1024).unwrap();
+    reopened
+        .register_index(
+            "kv",
+            "default",
+            Box::new(LsmIndex::open("kv", &index_dir).unwrap()),
+        )
+        .unwrap();
+
+    assert_eq!(reopened.fetch(rid).unwrap(), b"directory-replay-value");
+    assert_eq!(
+        reopened.fetch_by_index("kv", b"directory-key").unwrap(),
+        Some(b"directory-replay-value".to_vec())
+    );
+}
+
+#[test]
+fn stale_secondary_pointer_is_not_returned_after_primary_delete() {
+    let dir = tempdir().unwrap();
+    let index_dir = dir.path().join("indexes");
+    let mut engine = StorageEngine::open(dir.path(), 1024 * 1024).unwrap();
+    engine
+        .register_index(
+            "kv",
+            "default",
+            Box::new(LsmIndex::open("kv", &index_dir).unwrap()),
+        )
+        .unwrap();
+
+    let rid = engine
+        .put(
+            b"delete-me",
+            &[IndexInsert::new("kv", b"stale-key".to_vec())],
+        )
+        .unwrap();
+    engine.delete_record(rid).unwrap();
+
+    assert_eq!(engine.fetch_by_index("kv", b"stale-key").unwrap(), None);
+}
+
+#[test]
+fn delete_by_index_removes_secondary_pointer_and_primary_record() {
+    let dir = tempdir().unwrap();
+    let index_dir = dir.path().join("indexes");
+    let mut engine = StorageEngine::open(dir.path(), 1024 * 1024).unwrap();
+    engine
+        .register_index(
+            "kv",
+            "default",
+            Box::new(LsmIndex::open("kv", &index_dir).unwrap()),
+        )
+        .unwrap();
+
+    let rid = engine
+        .put(
+            b"delete-by-index",
+            &[IndexInsert::new("kv", b"delete-key".to_vec())],
+        )
+        .unwrap();
+
+    assert_eq!(
+        engine.delete_by_index("kv", b"delete-key").unwrap(),
+        Some(rid)
+    );
+    assert_eq!(engine.lookup_rid("kv", b"delete-key").unwrap(), None);
+    assert!(engine.fetch(rid).is_err());
+}

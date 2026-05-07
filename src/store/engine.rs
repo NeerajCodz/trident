@@ -1,6 +1,6 @@
 use super::manifest::{StorageManifest, StorageManifestStore};
 use super::wal::{StorageWal, StorageWalEntry, StorageWalOperation, StorageWalOptions};
-use super::{CompactionStats, RecordId, RecordStore};
+use super::{CompactionStats, PhysicalLocation, RecordId, RecordStore};
 use crate::cache::BlockCache;
 use crate::errors::{Result, TridentError};
 use crate::index::{IndexPlugin, IndexStats};
@@ -174,10 +174,11 @@ impl StorageEngine {
         std::fs::create_dir_all(root.join(Self::INDEX_DIR))?;
         std::fs::create_dir_all(root.join(Self::WAL_DIR))?;
 
-        let store = RecordStore::open(root.join(Self::PRIMARY_DIR))?;
+        let mut store = RecordStore::open(root.join(Self::PRIMARY_DIR))?;
         let wal_path = root.join(Self::WAL_DIR).join(Self::WAL_FILE);
         let wal = StorageWal::open(&wal_path)?;
         let replay_entries = StorageWal::replay(&wal_path)?;
+        replay_primary_directory(&mut store, &replay_entries)?;
 
         let manifest_store = StorageManifestStore::new(root.join(Self::MANIFEST_FILE));
         let mut manifest = manifest_store.load_or_create()?;
@@ -214,10 +215,11 @@ impl StorageEngine {
         std::fs::create_dir_all(root.join(Self::INDEX_DIR))?;
         std::fs::create_dir_all(root.join(Self::WAL_DIR))?;
 
-        let store = RecordStore::open(root.join(Self::PRIMARY_DIR))?;
+        let mut store = RecordStore::open(root.join(Self::PRIMARY_DIR))?;
         let wal_path = root.join(Self::WAL_DIR).join(Self::WAL_FILE);
         let wal = StorageWal::open_with_options(&wal_path, wal_options)?;
         let replay_entries = StorageWal::replay(&wal_path)?;
+        replay_primary_directory(&mut store, &replay_entries)?;
 
         let manifest_store = StorageManifestStore::new(root.join(Self::MANIFEST_FILE));
         let mut manifest = manifest_store.load_or_create()?;
@@ -269,11 +271,12 @@ impl StorageEngine {
                 .map(|insert| insert.index_type.as_str()),
         )?;
         let rid = self.store.put(value)?;
+        let location = self.store.location(rid)?;
         let mut entries = Vec::with_capacity(index_inserts.len() + 1);
         entries.push(StorageWalEntry {
             sequence: 0,
             index_type: "primary".to_string(),
-            key: Vec::new(),
+            key: encode_location(location),
             rid: Some(rid),
             operation: StorageWalOperation::Put,
         });
@@ -299,6 +302,9 @@ impl StorageEngine {
 
     pub fn put_index(&mut self, index_type: &str, key: &[u8], rid: RecordId) -> Result<()> {
         self.ensure_indexes_exist(std::iter::once(index_type))?;
+        if !self.store.contains(rid) {
+            return Err(TridentError::KeyNotFound);
+        }
         let sequence = self.append_wal(StorageWalEntry {
             sequence: 0,
             index_type: index_type.to_string(),
@@ -352,11 +358,40 @@ impl StorageEngine {
 
     pub fn fetch_by_index(&self, index_type: &str, key: &[u8]) -> Result<Option<Vec<u8>>> {
         let rid = self.lookup_rid(index_type, key)?;
-        rid.map(|id| self.fetch(id)).transpose()
+        match rid {
+            Some(id) => match self.fetch(id) {
+                Ok(value) => Ok(Some(value)),
+                Err(TridentError::KeyNotFound) => Ok(None),
+                Err(err) => Err(err),
+            },
+            None => Ok(None),
+        }
     }
 
     pub fn delete_record(&mut self, rid: RecordId) -> Result<()> {
-        self.store.delete(rid)
+        self.store.delete(rid)?;
+        self.store.flush()
+    }
+
+    pub fn delete_by_index(&mut self, index_type: &str, key: &[u8]) -> Result<Option<RecordId>> {
+        let rid = self.lookup_rid(index_type, key)?;
+        self.delete_index(index_type, key)?;
+        if let Some(rid) = rid {
+            self.delete_record(rid)?;
+        }
+        Ok(rid)
+    }
+
+    pub fn delete_record_with_index_cleanup(
+        &mut self,
+        rid: RecordId,
+        index_keys: &[IndexInsert],
+    ) -> Result<()> {
+        self.ensure_indexes_exist(index_keys.iter().map(|insert| insert.index_type.as_str()))?;
+        for index_key in index_keys {
+            self.delete_index(&index_key.index_type, &index_key.key)?;
+        }
+        self.delete_record(rid)
     }
 
     pub fn compact_primary(&mut self) -> Result<CompactionStats> {
@@ -702,4 +737,48 @@ fn list_all_files(dir: &Path) -> Result<Vec<String>> {
         }
     }
     Ok(out.into_iter().collect())
+}
+
+fn replay_primary_directory(store: &mut RecordStore, entries: &[StorageWalEntry]) -> Result<()> {
+    let mut repaired = false;
+    for entry in entries {
+        if entry.index_type != "primary" || entry.operation != StorageWalOperation::Put {
+            continue;
+        }
+        let Some(rid) = entry.rid else {
+            continue;
+        };
+        let Some(location) = decode_location(&entry.key) else {
+            continue;
+        };
+        store.replay_primary_put(rid, location)?;
+        repaired = true;
+    }
+    if repaired {
+        store.flush()?;
+    }
+    Ok(())
+}
+
+fn encode_location(location: PhysicalLocation) -> Vec<u8> {
+    let mut out = Vec::with_capacity(16);
+    out.extend_from_slice(&location.segment_id.to_le_bytes());
+    out.extend_from_slice(&location.record_offset.to_le_bytes());
+    out.extend_from_slice(&location.length.to_le_bytes());
+    out
+}
+
+fn decode_location(bytes: &[u8]) -> Option<PhysicalLocation> {
+    if bytes.len() != 16 {
+        return None;
+    }
+
+    let segment_id = u32::from_le_bytes(bytes[0..4].try_into().ok()?);
+    let record_offset = u64::from_le_bytes(bytes[4..12].try_into().ok()?);
+    let length = u32::from_le_bytes(bytes[12..16].try_into().ok()?);
+    Some(PhysicalLocation {
+        segment_id,
+        record_offset,
+        length,
+    })
 }

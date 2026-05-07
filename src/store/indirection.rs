@@ -2,6 +2,7 @@ use super::record_id::RecordId;
 use crate::errors::{Result, TridentError};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fs::OpenOptions;
 use std::path::Path;
 
 /// Physical location of a record within a segment file.
@@ -73,6 +74,19 @@ impl IndirectionTable {
         Ok(())
     }
 
+    /// Install or repair a logical record mapping during WAL replay.
+    pub fn upsert_live(&mut self, rid: RecordId, location: PhysicalLocation) {
+        self.entries.insert(
+            rid.0,
+            Entry {
+                location,
+                alive: true,
+            },
+        );
+        self.next_rid = self.next_rid.max(rid.0);
+        self.next_segment_id = self.next_segment_id.max(location.segment_id);
+    }
+
     /// Update the physical location of `rid` (called during compaction).
     pub fn relocate(&mut self, rid: RecordId, new_location: PhysicalLocation) {
         if let Some(entry) = self.entries.get_mut(&rid.0) {
@@ -112,6 +126,10 @@ impl IndirectionTable {
         self.entries.len() as u64
     }
 
+    pub fn contains_live(&self, rid: RecordId) -> bool {
+        self.entries.get(&rid.0).is_some_and(|entry| entry.alive)
+    }
+
     /// The ID of the currently active segment (new records appended here).
     pub fn active_segment_id(&self) -> u32 {
         self.next_segment_id
@@ -125,10 +143,26 @@ impl IndirectionTable {
         self.next_segment_id
     }
 
-    /// Persist the table to `path` as JSON.
+    /// Persist the table to `path` as JSON through temp-write + atomic rename.
     pub fn save(&self, path: &Path) -> Result<()> {
         let json = serde_json::to_vec(self)?;
-        std::fs::write(path, json)?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        let tmp_path = path.with_extension("tmp");
+        std::fs::write(&tmp_path, json)?;
+        OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&tmp_path)?
+            .sync_all()?;
+        #[cfg(windows)]
+        if path.exists() {
+            std::fs::remove_file(path)?;
+        }
+        std::fs::rename(&tmp_path, path)?;
+        sync_parent_dir(path)?;
         Ok(())
     }
 
@@ -137,4 +171,17 @@ impl IndirectionTable {
         let json = std::fs::read(path)?;
         Ok(serde_json::from_slice(&json)?)
     }
+}
+
+#[cfg(unix)]
+fn sync_parent_dir(path: &Path) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::File::open(parent)?.sync_all()?;
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn sync_parent_dir(_path: &Path) -> Result<()> {
+    Ok(())
 }

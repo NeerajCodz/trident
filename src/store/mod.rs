@@ -124,12 +124,26 @@ impl RecordStore {
     /// this record.
     pub fn put(&mut self, bytes: &[u8]) -> Result<RecordId> {
         let (record_offset, length) = self.active_segment.append(bytes)?;
+        self.active_segment.sync()?;
         let loc = PhysicalLocation {
             segment_id: self.active_segment.segment_id(),
             record_offset,
             length,
         };
         Ok(self.indirection.allocate(loc))
+    }
+
+    pub fn location(&self, rid: RecordId) -> Result<PhysicalLocation> {
+        self.indirection.locate(rid)
+    }
+
+    pub fn contains(&self, rid: RecordId) -> bool {
+        self.indirection.contains_live(rid)
+    }
+
+    pub fn replay_primary_put(&mut self, rid: RecordId, location: PhysicalLocation) -> Result<()> {
+        self.indirection.upsert_live(rid, location);
+        Ok(())
     }
 
     /// Retrieve the bytes associated with `rid`.
@@ -190,11 +204,15 @@ impl RecordStore {
             stats.records_retained += 1;
             stats.bytes_written += length as u64;
         }
+        new_seg.sync()?;
 
         // Swap in the new active segment.
         self.active_segment = new_seg;
 
-        // Remove old segment files that are now superseded.
+        // Install the repaired directory before any old segment is removed.
+        self.flush()?;
+
+        // Remove old segment files only after the new indirection table is durable.
         for old_id in old_segment_ids {
             if old_id != new_id {
                 let old_path = Self::seg_path(&self.dir, old_id);
@@ -204,7 +222,6 @@ impl RecordStore {
             }
         }
 
-        self.flush()?;
         Ok(stats)
     }
 

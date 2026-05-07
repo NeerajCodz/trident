@@ -11,6 +11,7 @@ if (-not $SkipDockerBuild) {
 
 cargo check --benches --tests
 cargo clippy --all-targets -- -D warnings
+.\scripts\verify_slog_storage.ps1
 
 if (-not $SkipTests) {
     cargo test --all

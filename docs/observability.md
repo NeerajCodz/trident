@@ -60,3 +60,6 @@ The logger adds environment fields automatically: `commit`, `version`, `region`,
 - Propagate `request_id` through gRPC and internal query execution.
 - Use `outcome = "success"` or `outcome = "error"` consistently.
 - Include `fallback_used = true` for CPU fallback from GPU paths.
+- Production storage paths must use `slog` only.
+- Do not use `println!`, `eprintln!`, `dbg!`, direct `log` calls, direct `tracing` calls, or ad hoc formatted strings as production log messages.
+- `format!` is acceptable for error values and structured field values, but not as a replacement for structured `slog` context fields.

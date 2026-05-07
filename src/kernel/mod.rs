@@ -1,5 +1,17 @@
+pub mod invariants;
+pub mod physical;
+
 use crate::errors::Result;
 use crate::store::RecordId;
+
+pub use invariants::{
+    CanonicalValuePolicy, DurableFormatDescriptor, KernelInvariant, ManifestTracked,
+    MemoryOwnership, RecoverableStructure, StorageOperationMetrics,
+};
+pub use physical::{
+    AnalyticalProjection, EngineCapability, EngineRole, MaterializedLayout, PhysicalEngine,
+    PhysicalEngineKind, ValueStore,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ExecutionMode {

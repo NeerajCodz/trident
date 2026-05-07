@@ -55,6 +55,20 @@ impl IndexStorageLayout {
         stores_record_ids: true,
         stores_lossy_summaries: true,
     };
+
+    pub fn validate_default_kernel_policy(self, index_name: &str) -> Result<()> {
+        if self.stores_full_values {
+            return Err(crate::errors::TridentError::InvalidConfig(format!(
+                "index {index_name} violates pointer-only kernel policy"
+            )));
+        }
+        if !self.stores_record_ids {
+            return Err(crate::errors::TridentError::InvalidConfig(format!(
+                "index {index_name} must store RecordId pointers"
+            )));
+        }
+        Ok(())
+    }
 }
 
 /// The interface every index plugin must implement.

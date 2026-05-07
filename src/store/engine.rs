@@ -251,6 +251,9 @@ impl StorageEngine {
         plugin: Box<dyn IndexPlugin>,
     ) -> Result<()> {
         let index_type = index_type.into();
+        plugin
+            .storage_layout()
+            .validate_default_kernel_policy(&index_type)?;
         self.indexes.insert(index_type.clone(), plugin);
         self.manifest
             .plugin_namespaces

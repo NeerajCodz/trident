@@ -110,6 +110,10 @@ name = "kv_record_store"
 path = "tests/kv/record_store_test.rs"
 
 [[test]]
+name = "kv_record_directory"
+path = "tests/kv/record_directory_test.rs"
+
+[[test]]
 name = "integration_scenario"
 path = "tests/integration/scenario_test.rs"
 

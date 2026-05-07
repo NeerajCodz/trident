@@ -35,6 +35,12 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// Canonical record directory used by the storage kernel.
+///
+/// Every index points to `RecordId`, and only this directory resolves that
+/// logical id to physical bytes in the primary value store.
+pub type RecordDirectory = IndirectionTable;
+
 /// Statistics returned by [`RecordStore::compact`].
 #[derive(Clone, Debug, Default)]
 pub struct CompactionStats {
@@ -44,6 +50,14 @@ pub struct CompactionStats {
     pub records_dropped: u64,
     /// Total bytes of live record data written to the new segment.
     pub bytes_written: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct CanonicalStorageStats {
+    pub live_records: u64,
+    pub dead_records: u64,
+    pub total_records: u64,
+    pub canonical_live_bytes: u64,
 }
 
 /// The single primary data store for Trident's no-duplication storage engine.
@@ -202,5 +216,22 @@ impl RecordStore {
     /// Total bytes occupied by live records on disk (data bytes only).
     pub fn live_bytes(&self) -> u64 {
         self.indirection.live_bytes()
+    }
+
+    pub fn dead_count(&self) -> u64 {
+        self.indirection.dead_count()
+    }
+
+    pub fn total_count(&self) -> u64 {
+        self.indirection.total_count()
+    }
+
+    pub fn canonical_stats(&self) -> CanonicalStorageStats {
+        CanonicalStorageStats {
+            live_records: self.live_count(),
+            dead_records: self.dead_count(),
+            total_records: self.total_count(),
+            canonical_live_bytes: self.live_bytes(),
+        }
     }
 }

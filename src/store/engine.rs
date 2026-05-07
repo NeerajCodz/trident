@@ -4,6 +4,7 @@ use super::{CompactionStats, RecordId, RecordStore};
 use crate::cache::BlockCache;
 use crate::errors::{Result, TridentError};
 use crate::index::{IndexPlugin, IndexStats};
+use crate::kernel::{KernelCompactionReport, KernelSnapshot, KernelStorageReport, StorageKernel};
 use bytes::Bytes;
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -419,6 +420,14 @@ impl StorageEngine {
         self.store.live_bytes()
     }
 
+    pub fn canonical_live_bytes(&self) -> u64 {
+        self.store.canonical_stats().canonical_live_bytes
+    }
+
+    pub fn dead_records(&self) -> u64 {
+        self.store.dead_count()
+    }
+
     pub fn manifest(&self) -> &StorageManifest {
         &self.manifest
     }
@@ -618,6 +627,47 @@ impl StorageEngine {
             self.manifest.index_files.insert(index_type.clone(), files);
         }
         self.manifest_store.save(&self.manifest)
+    }
+}
+
+impl StorageKernel for StorageEngine {
+    fn put_record(&mut self, bytes: &[u8]) -> Result<RecordId> {
+        self.put(bytes, &[])
+    }
+
+    fn get_record(&self, rid: RecordId) -> Result<Vec<u8>> {
+        self.fetch(rid)
+    }
+
+    fn delete_record(&mut self, rid: RecordId) -> Result<()> {
+        StorageEngine::delete_record(self, rid)
+    }
+
+    fn storage_report(&self) -> KernelStorageReport {
+        KernelStorageReport {
+            live_records: self.live_count(),
+            dead_records: self.dead_records(),
+            canonical_live_bytes: self.canonical_live_bytes(),
+        }
+    }
+
+    fn snapshot(&self) -> KernelSnapshot {
+        KernelSnapshot {
+            sequence: self.manifest.last_sequence,
+        }
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        StorageEngine::flush(self)
+    }
+
+    fn compact(&mut self) -> Result<KernelCompactionReport> {
+        let stats = self.compact_primary()?;
+        Ok(KernelCompactionReport {
+            records_retained: stats.records_retained,
+            records_dropped: stats.records_dropped,
+            bytes_rewritten: stats.bytes_written,
+        })
     }
 }
 

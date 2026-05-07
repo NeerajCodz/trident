@@ -107,6 +107,11 @@ impl IndirectionTable {
             .sum()
     }
 
+    /// Total number of records tracked by this directory, live plus tombstoned.
+    pub fn total_count(&self) -> u64 {
+        self.entries.len() as u64
+    }
+
     /// The ID of the currently active segment (new records appended here).
     pub fn active_segment_id(&self) -> u32 {
         self.next_segment_id

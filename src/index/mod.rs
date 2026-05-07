@@ -36,6 +36,27 @@ pub struct IndexStats {
     pub versions: u64,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct IndexStorageLayout {
+    pub stores_full_values: bool,
+    pub stores_record_ids: bool,
+    pub stores_lossy_summaries: bool,
+}
+
+impl IndexStorageLayout {
+    pub const POINTER_ONLY: Self = Self {
+        stores_full_values: false,
+        stores_record_ids: true,
+        stores_lossy_summaries: false,
+    };
+
+    pub const POINTER_WITH_LOSSY_SUMMARIES: Self = Self {
+        stores_full_values: false,
+        stores_record_ids: true,
+        stores_lossy_summaries: true,
+    };
+}
+
 /// The interface every index plugin must implement.
 ///
 /// An index plugin stores `key → RecordId` mappings only.  It never holds
@@ -85,5 +106,11 @@ pub trait IndexPlugin: Send + Sync {
     /// Return plugin-level key/version counters.
     fn stats(&self) -> IndexStats {
         IndexStats::default()
+    }
+
+    /// Durable storage layout declaration used to enforce Trident's
+    /// single-copy value contract.
+    fn storage_layout(&self) -> IndexStorageLayout {
+        IndexStorageLayout::POINTER_ONLY
     }
 }

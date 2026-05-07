@@ -162,6 +162,10 @@ name = "accel_gpu_fallback"
 path = "tests/accel/gpu_fallback_test.rs"
 
 [[test]]
+name = "accel_hardware_io"
+path = "tests/accel/hardware_io_test.rs"
+
+[[test]]
 name = "durability_format_codecs"
 path = "tests/durability/format_codec_test.rs"
 

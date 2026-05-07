@@ -2,6 +2,7 @@ pub mod binary;
 pub mod capability;
 pub mod checksum;
 pub mod compression;
+pub mod hardware;
 pub mod rate_limiter;
 
 pub use binary::{BinaryReader, BinaryWriter};
@@ -11,4 +12,5 @@ pub use capability::{
 };
 pub use checksum::{crc32c, file_digest};
 pub use compression::{decode_block, encode_block};
+pub use hardware::{HardwareBackend, HardwareCapability, HardwareIoProfile, HardwareOperation};
 pub use rate_limiter::IoRateLimiter;

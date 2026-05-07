@@ -134,6 +134,10 @@ name = "integration_hybrid_query"
 path = "tests/integration/hybrid_query_test.rs"
 
 [[test]]
+name = "integration_specialized_engine_contract"
+path = "tests/integration/specialized_engine_contract_test.rs"
+
+[[test]]
 name = "concurrency_benchmark_integration"
 path = "tests/concurrency/benchmark_integration_test.rs"
 

@@ -16,6 +16,7 @@ pub mod hnsw;
 pub mod inverted;
 pub mod ivf;
 pub mod rtree;
+pub mod specialized;
 pub mod time_series;
 
 pub use bitmap::BitmapIndex;
@@ -25,6 +26,7 @@ pub use hnsw::adjacency::AdjacencyIndex;
 pub use inverted::InvertedIndex;
 pub use ivf::IvfFlatIndex;
 pub use rtree::{BoundingBox, PackedRTreeIndex};
+pub use specialized::{SpecializedEngineContract, SpecializedEngineRegistry};
 pub use time_series::TimePartition;
 
 use crate::errors::Result;

@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 
 const STORAGE_WAL_MAGIC: u32 = 0x5453_574c;
 const STORAGE_WAL_VERSION: u8 = 1;
+const STORAGE_WAL_PAYLOAD_MAGIC: u32 = 0x5453_5742;
+const STORAGE_WAL_PAYLOAD_VERSION: u8 = 1;
 const STORAGE_WAL_HEADER_LEN: usize = 5;
 const STORAGE_WAL_RECORD_HEADER_LEN: usize = 8;
 const DEFAULT_SEGMENT_BYTES: u64 = 16 * 1024 * 1024;
@@ -253,7 +255,7 @@ fn replay_file(path: &Path) -> Result<Vec<StorageWalEntry>> {
         if crc32(payload) != expected {
             break;
         }
-        let entry: StorageWalEntry = serde_json::from_slice(payload)?;
+        let entry = decode_payload(payload)?;
         out.push(entry);
         cursor = end;
     }
@@ -267,11 +269,204 @@ fn crc32(bytes: &[u8]) -> u32 {
 }
 
 fn encode_record(entry: &StorageWalEntry) -> Result<Vec<u8>> {
-    let payload = serde_json::to_vec(entry)?;
+    let payload = encode_payload(entry)?;
     let checksum = crc32(&payload);
     let mut out = Vec::with_capacity(STORAGE_WAL_RECORD_HEADER_LEN + payload.len());
     out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
     out.extend_from_slice(&checksum.to_le_bytes());
     out.extend_from_slice(&payload);
     Ok(out)
+}
+
+fn encode_payload(entry: &StorageWalEntry) -> Result<Vec<u8>> {
+    if entry.index_type.len() > u16::MAX as usize {
+        return Err(TridentError::InvalidConfig(
+            "storage WAL index type exceeds binary payload limit".to_string(),
+        ));
+    }
+    if entry.key.len() > u32::MAX as usize {
+        return Err(TridentError::InvalidConfig(
+            "storage WAL key exceeds binary payload limit".to_string(),
+        ));
+    }
+
+    let mut out = Vec::with_capacity(31 + entry.index_type.len() + entry.key.len());
+    out.extend_from_slice(&STORAGE_WAL_PAYLOAD_MAGIC.to_le_bytes());
+    out.push(STORAGE_WAL_PAYLOAD_VERSION);
+    out.extend_from_slice(&entry.sequence.to_le_bytes());
+    out.push(match entry.operation {
+        StorageWalOperation::Put => 1,
+        StorageWalOperation::Delete => 2,
+    });
+    out.extend_from_slice(&(entry.index_type.len() as u16).to_le_bytes());
+    out.extend_from_slice(&(entry.key.len() as u32).to_le_bytes());
+    match entry.rid {
+        Some(rid) => {
+            out.push(1);
+            out.extend_from_slice(&rid.0.to_le_bytes());
+        }
+        None => {
+            out.push(0);
+            out.extend_from_slice(&0_u64.to_le_bytes());
+        }
+    }
+    out.extend_from_slice(entry.index_type.as_bytes());
+    out.extend_from_slice(&entry.key);
+    Ok(out)
+}
+
+fn decode_payload(payload: &[u8]) -> Result<StorageWalEntry> {
+    if payload.len() < 5 {
+        return Ok(serde_json::from_slice(payload)?);
+    }
+    let magic = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
+    if magic != STORAGE_WAL_PAYLOAD_MAGIC {
+        return Ok(serde_json::from_slice(payload)?);
+    }
+    if payload[4] != STORAGE_WAL_PAYLOAD_VERSION {
+        return Err(TridentError::Corrupt {
+            path: PathBuf::from("<storage-wal-payload>"),
+            reason: format!("unsupported storage WAL payload version {}", payload[4]),
+        });
+    }
+
+    let mut cursor = 5;
+    let sequence = read_u64(payload, &mut cursor)?;
+    let operation = match read_u8(payload, &mut cursor)? {
+        1 => StorageWalOperation::Put,
+        2 => StorageWalOperation::Delete,
+        code => {
+            return Err(TridentError::Corrupt {
+                path: PathBuf::from("<storage-wal-payload>"),
+                reason: format!("unknown storage WAL operation code {code}"),
+            });
+        }
+    };
+    let index_len = read_u16(payload, &mut cursor)? as usize;
+    let key_len = read_u32(payload, &mut cursor)? as usize;
+    let rid_present = read_u8(payload, &mut cursor)?;
+    let raw_rid = read_u64(payload, &mut cursor)?;
+
+    let index_end = cursor
+        .checked_add(index_len)
+        .ok_or_else(|| payload_corrupt("index length overflow"))?;
+    let key_end = index_end
+        .checked_add(key_len)
+        .ok_or_else(|| payload_corrupt("key length overflow"))?;
+    if key_end != payload.len() {
+        return Err(payload_corrupt(
+            "payload length does not match encoded fields",
+        ));
+    }
+
+    let index_type = std::str::from_utf8(&payload[cursor..index_end])
+        .map_err(|err| payload_corrupt(format!("index type is not utf-8: {err}")))?
+        .to_string();
+    let key = payload[index_end..key_end].to_vec();
+    let rid = match rid_present {
+        0 => None,
+        1 => Some(RecordId(raw_rid)),
+        code => {
+            return Err(payload_corrupt(format!(
+                "invalid storage WAL rid-present flag {code}"
+            )));
+        }
+    };
+
+    Ok(StorageWalEntry {
+        sequence,
+        index_type,
+        key,
+        rid,
+        operation,
+    })
+}
+
+fn read_u8(payload: &[u8], cursor: &mut usize) -> Result<u8> {
+    let Some(value) = payload.get(*cursor).copied() else {
+        return Err(payload_corrupt("unexpected end of payload"));
+    };
+    *cursor += 1;
+    Ok(value)
+}
+
+fn read_u16(payload: &[u8], cursor: &mut usize) -> Result<u16> {
+    let end = cursor
+        .checked_add(2)
+        .ok_or_else(|| payload_corrupt("cursor overflow"))?;
+    let bytes = payload
+        .get(*cursor..end)
+        .ok_or_else(|| payload_corrupt("unexpected end of payload"))?;
+    *cursor = end;
+    Ok(u16::from_le_bytes(
+        bytes.try_into().expect("slice length checked"),
+    ))
+}
+
+fn read_u32(payload: &[u8], cursor: &mut usize) -> Result<u32> {
+    let end = cursor
+        .checked_add(4)
+        .ok_or_else(|| payload_corrupt("cursor overflow"))?;
+    let bytes = payload
+        .get(*cursor..end)
+        .ok_or_else(|| payload_corrupt("unexpected end of payload"))?;
+    *cursor = end;
+    Ok(u32::from_le_bytes(
+        bytes.try_into().expect("slice length checked"),
+    ))
+}
+
+fn read_u64(payload: &[u8], cursor: &mut usize) -> Result<u64> {
+    let end = cursor
+        .checked_add(8)
+        .ok_or_else(|| payload_corrupt("cursor overflow"))?;
+    let bytes = payload
+        .get(*cursor..end)
+        .ok_or_else(|| payload_corrupt("unexpected end of payload"))?;
+    *cursor = end;
+    Ok(u64::from_le_bytes(
+        bytes.try_into().expect("slice length checked"),
+    ))
+}
+
+fn payload_corrupt(reason: impl Into<String>) -> TridentError {
+    TridentError::Corrupt {
+        path: PathBuf::from("<storage-wal-payload>"),
+        reason: reason.into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn storage_wal_binary_payload_roundtrips() {
+        let entry = StorageWalEntry {
+            sequence: 42,
+            index_type: "kv".to_string(),
+            key: b"hello".to_vec(),
+            rid: Some(RecordId(7)),
+            operation: StorageWalOperation::Put,
+        };
+
+        let payload = encode_payload(&entry).unwrap();
+
+        assert_ne!(payload.first(), Some(&b'{'));
+        assert_eq!(decode_payload(&payload).unwrap(), entry);
+    }
+
+    #[test]
+    fn storage_wal_replay_accepts_legacy_json_payloads() {
+        let entry = StorageWalEntry {
+            sequence: 43,
+            index_type: "legacy".to_string(),
+            key: b"json".to_vec(),
+            rid: None,
+            operation: StorageWalOperation::Delete,
+        };
+        let payload = serde_json::to_vec(&entry).unwrap();
+
+        assert_eq!(decode_payload(&payload).unwrap(), entry);
+    }
 }

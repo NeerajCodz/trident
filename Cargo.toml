@@ -122,6 +122,10 @@ name = "kv_lsm_sstable"
 path = "tests/kv/lsm_sstable_test.rs"
 
 [[test]]
+name = "kv_lsm_flush_pipeline"
+path = "tests/kv/lsm_flush_pipeline_test.rs"
+
+[[test]]
 name = "integration_scenario"
 path = "tests/integration/scenario_test.rs"
 

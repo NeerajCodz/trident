@@ -5,11 +5,17 @@
 //! Snapshot reads resolve the newest update whose sequence is `<= snapshot`.
 
 pub mod binary;
+pub mod pipeline;
 pub mod sstable;
+
+pub use pipeline::{
+    ImmutableMemtable, LsmFlushPipeline, LsmFlushReport, MemtableEntry, MemtableEntryKind,
+    MutableMemtable,
+};
 
 use crate::errors::{Result, TridentError};
 use crate::index::{IndexPlugin, IndexStats};
-use crate::io::{crc32c, BinaryReader, BinaryWriter};
+use crate::io::{BinaryReader, BinaryWriter, crc32c};
 use crate::store::RecordId;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;

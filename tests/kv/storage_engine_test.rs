@@ -781,7 +781,7 @@ fn storage_engine_stats_report_per_index_counts() {
         )
         .unwrap();
     engine.set_compaction_budget_bytes(64 * 1024 * 1024);
-    engine
+    let rid = engine
         .put(
             b"stats-payload",
             &[
@@ -790,12 +790,24 @@ fn storage_engine_stats_report_per_index_counts() {
             ],
         )
         .unwrap();
+    assert_eq!(engine.fetch(rid).unwrap(), b"stats-payload");
 
     let stats = engine.stats();
     assert_eq!(stats.live_records, 1);
     assert_eq!(stats.compaction_budget_bytes, 64 * 1024 * 1024);
     assert_eq!(stats.index_stats.get("kv").unwrap().live_keys, 1);
     assert_eq!(stats.index_stats.get("bt").unwrap().live_keys, 1);
+    assert_eq!(stats.reads_total, 1);
+    assert_eq!(stats.writes_total, 1);
+    assert_eq!(stats.wal_records_total, 3);
+    assert!(stats.wal_bytes_written > 0);
+    assert_eq!(stats.user_bytes_written, b"stats-payload".len() as u64);
+    assert!(stats.read_latency_p50_us > 0);
+    assert!(stats.write_latency_p50_us > 0);
+    assert!(stats.reads_per_sec > 0.0);
+    assert!(stats.writes_per_sec > 0.0);
+    assert!(stats.wal_bytes_per_sec > 0.0);
+    assert!(stats.write_amplification > 1.0);
 }
 
 #[test]

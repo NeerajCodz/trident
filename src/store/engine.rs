@@ -5,9 +5,12 @@ use crate::cache::BlockCache;
 use crate::errors::{Result, TridentError};
 use crate::index::{IndexPlugin, IndexStats};
 use crate::kernel::{KernelCompactionReport, KernelSnapshot, KernelStorageReport, StorageKernel};
+use crate::metrics::{EngineMetrics, LatencyTracker};
 use bytes::Bytes;
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
+use std::time::Instant;
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum CacheEntryType {
@@ -92,6 +95,11 @@ pub struct StorageEngine {
     pending_replay: Vec<StorageWalEntry>,
     cache: UnifiedBlockCache,
     compaction_budget_bytes: u64,
+    metrics: EngineMetrics,
+    read_latency: LatencyTracker,
+    write_latency: LatencyTracker,
+    compaction_latency: LatencyTracker,
+    opened_at: Instant,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -151,6 +159,14 @@ pub struct StorageEngineStats {
     pub write_latency_p99_us: u64,
     pub compaction_latency_p50_us: u64,
     pub compaction_latency_p95_us: u64,
+    pub reads_total: u64,
+    pub writes_total: u64,
+    pub deletes_total: u64,
+    pub read_errors_total: u64,
+    pub write_errors_total: u64,
+    pub wal_records_total: u64,
+    pub wal_bytes_written: u64,
+    pub user_bytes_written: u64,
     // Throughput metrics
     pub reads_per_sec: f64,
     pub writes_per_sec: f64,
@@ -202,6 +218,11 @@ impl StorageEngine {
             pending_replay,
             cache: UnifiedBlockCache::new(cache_capacity_bytes),
             compaction_budget_bytes: 0,
+            metrics: EngineMetrics::default(),
+            read_latency: LatencyTracker::new(4096),
+            write_latency: LatencyTracker::new(4096),
+            compaction_latency: LatencyTracker::new(1024),
+            opened_at: Instant::now(),
         })
     }
 
@@ -243,6 +264,11 @@ impl StorageEngine {
             pending_replay,
             cache: UnifiedBlockCache::new(cache_capacity_bytes),
             compaction_budget_bytes: 0,
+            metrics: EngineMetrics::default(),
+            read_latency: LatencyTracker::new(4096),
+            write_latency: LatencyTracker::new(4096),
+            compaction_latency: LatencyTracker::new(1024),
+            opened_at: Instant::now(),
         })
     }
 
@@ -265,6 +291,7 @@ impl StorageEngine {
     }
 
     pub fn put(&mut self, value: &[u8], index_inserts: &[IndexInsert]) -> Result<RecordId> {
+        let started = Instant::now();
         self.ensure_indexes_exist(
             index_inserts
                 .iter()
@@ -297,12 +324,19 @@ impl StorageEngine {
             plugin.put_with_sequence(&insert.key, rid, wal_entry.sequence)?;
         }
         self.store.flush()?;
+        self.metrics.writes.fetch_add(1, Ordering::Relaxed);
+        self.metrics
+            .write_bytes
+            .fetch_add(value.len() as u64, Ordering::Relaxed);
+        record_latency(&self.write_latency, started);
         Ok(rid)
     }
 
     pub fn put_index(&mut self, index_type: &str, key: &[u8], rid: RecordId) -> Result<()> {
+        let started = Instant::now();
         self.ensure_indexes_exist(std::iter::once(index_type))?;
         if !self.store.contains(rid) {
+            self.metrics.write_errors.fetch_add(1, Ordering::Relaxed);
             return Err(TridentError::KeyNotFound);
         }
         let sequence = self.append_wal(StorageWalEntry {
@@ -315,10 +349,14 @@ impl StorageEngine {
         let plugin = self.indexes.get_mut(index_type).ok_or_else(|| {
             TridentError::InvalidConfig(format!("unknown index plugin: {index_type}"))
         })?;
-        plugin.put_with_sequence(key, rid, sequence)
+        plugin.put_with_sequence(key, rid, sequence)?;
+        self.metrics.writes.fetch_add(1, Ordering::Relaxed);
+        record_latency(&self.write_latency, started);
+        Ok(())
     }
 
     pub fn delete_index(&mut self, index_type: &str, key: &[u8]) -> Result<()> {
+        let started = Instant::now();
         self.ensure_indexes_exist(std::iter::once(index_type))?;
         let sequence = self.append_wal(StorageWalEntry {
             sequence: 0,
@@ -330,7 +368,10 @@ impl StorageEngine {
         let plugin = self.indexes.get_mut(index_type).ok_or_else(|| {
             TridentError::InvalidConfig(format!("unknown index plugin: {index_type}"))
         })?;
-        plugin.delete_with_sequence(key, sequence)
+        plugin.delete_with_sequence(key, sequence)?;
+        self.metrics.deletes.fetch_add(1, Ordering::Relaxed);
+        record_latency(&self.write_latency, started);
+        Ok(())
     }
 
     pub fn lookup_rid(&self, index_type: &str, key: &[u8]) -> Result<Option<RecordId>> {
@@ -353,7 +394,18 @@ impl StorageEngine {
     }
 
     pub fn fetch(&self, rid: RecordId) -> Result<Vec<u8>> {
-        self.store.get(rid)
+        let started = Instant::now();
+        let result = self.store.get(rid);
+        record_latency(&self.read_latency, started);
+        match &result {
+            Ok(_) => {
+                self.metrics.reads.fetch_add(1, Ordering::Relaxed);
+            }
+            Err(_) => {
+                self.metrics.read_errors.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        result
     }
 
     pub fn fetch_by_index(&self, index_type: &str, key: &[u8]) -> Result<Option<Vec<u8>>> {
@@ -369,8 +421,12 @@ impl StorageEngine {
     }
 
     pub fn delete_record(&mut self, rid: RecordId) -> Result<()> {
+        let started = Instant::now();
         self.store.delete(rid)?;
-        self.store.flush()
+        self.store.flush()?;
+        self.metrics.deletes.fetch_add(1, Ordering::Relaxed);
+        record_latency(&self.write_latency, started);
+        Ok(())
     }
 
     pub fn delete_by_index(&mut self, index_type: &str, key: &[u8]) -> Result<Option<RecordId>> {
@@ -395,8 +451,10 @@ impl StorageEngine {
     }
 
     pub fn compact_primary(&mut self) -> Result<CompactionStats> {
+        let started = Instant::now();
         let stats = self.store.compact()?;
         self.bump_manifest_version()?;
+        record_latency(&self.compaction_latency, started);
         Ok(stats)
     }
 
@@ -484,11 +542,19 @@ impl StorageEngine {
             .iter()
             .map(|(name, plugin)| (name.clone(), plugin.stats()))
             .collect();
+        let metrics = self.metrics.snapshot();
+        let elapsed_secs = self.opened_at.elapsed().as_secs_f64().max(0.001);
+        let live_bytes = self.live_bytes();
+        let write_amplification = if metrics.write_bytes == 0 {
+            0.0
+        } else {
+            (metrics.write_bytes + metrics.wal_bytes) as f64 / metrics.write_bytes as f64
+        };
         StorageEngineStats {
             manifest_version: self.manifest.version,
             last_sequence: self.manifest.last_sequence,
             live_records: self.live_count(),
-            live_bytes: self.live_bytes(),
+            live_bytes,
             pending_wal_replay: self.pending_replay.len(),
             compaction_budget_bytes: self.compaction_budget_bytes,
             index_stats,
@@ -496,23 +562,28 @@ impl StorageEngine {
             last_compacted_at_sequence: self.manifest.last_compacted_at_sequence.clone(),
             maintenance_cycles_run: self.manifest.maintenance_cycles_run,
             last_maintenance_at_sequence: self.manifest.last_maintenance_at_sequence,
-            // Default latency metrics (0 = no data collected yet)
-            read_latency_p50_us: 0,
-            read_latency_p95_us: 0,
-            read_latency_p99_us: 0,
-            write_latency_p50_us: 0,
-            write_latency_p95_us: 0,
-            write_latency_p99_us: 0,
-            compaction_latency_p50_us: 0,
-            compaction_latency_p95_us: 0,
-            // Default throughput metrics
-            reads_per_sec: 0.0,
-            writes_per_sec: 0.0,
-            wal_bytes_per_sec: 0.0,
-            // Default amplification metrics
-            read_amplification: 0.0,
-            write_amplification: 0.0,
-            space_amplification: 0.0,
+            read_latency_p50_us: self.read_latency.percentile(0.50).unwrap_or(0),
+            read_latency_p95_us: self.read_latency.percentile(0.95).unwrap_or(0),
+            read_latency_p99_us: self.read_latency.percentile(0.99).unwrap_or(0),
+            write_latency_p50_us: self.write_latency.percentile(0.50).unwrap_or(0),
+            write_latency_p95_us: self.write_latency.percentile(0.95).unwrap_or(0),
+            write_latency_p99_us: self.write_latency.percentile(0.99).unwrap_or(0),
+            compaction_latency_p50_us: self.compaction_latency.percentile(0.50).unwrap_or(0),
+            compaction_latency_p95_us: self.compaction_latency.percentile(0.95).unwrap_or(0),
+            reads_total: metrics.reads,
+            writes_total: metrics.writes,
+            deletes_total: metrics.deletes,
+            read_errors_total: metrics.read_errors,
+            write_errors_total: metrics.write_errors,
+            wal_records_total: metrics.wal_records,
+            wal_bytes_written: metrics.wal_bytes,
+            user_bytes_written: metrics.write_bytes,
+            reads_per_sec: metrics.reads as f64 / elapsed_secs,
+            writes_per_sec: metrics.writes as f64 / elapsed_secs,
+            wal_bytes_per_sec: metrics.wal_bytes as f64 / elapsed_secs,
+            read_amplification: if metrics.reads == 0 { 0.0 } else { 1.0 },
+            write_amplification,
+            space_amplification: if live_bytes == 0 { 0.0 } else { 1.0 },
         }
     }
 
@@ -591,7 +662,12 @@ impl StorageEngine {
     fn append_wal(&mut self, mut entry: StorageWalEntry) -> Result<u64> {
         self.manifest.last_sequence += 1;
         entry.sequence = self.manifest.last_sequence;
+        let wal_bytes = estimated_wal_entry_bytes(&entry);
         self.wal.append(&entry)?;
+        self.metrics.wal_records.fetch_add(1, Ordering::Relaxed);
+        self.metrics
+            .wal_bytes
+            .fetch_add(wal_bytes, Ordering::Relaxed);
         Ok(entry.sequence)
     }
 
@@ -600,7 +676,15 @@ impl StorageEngine {
             self.manifest.last_sequence += 1;
             entry.sequence = self.manifest.last_sequence;
         }
-        self.wal.append_batch(entries)
+        let wal_bytes = entries.iter().map(estimated_wal_entry_bytes).sum();
+        self.wal.append_batch(entries)?;
+        self.metrics
+            .wal_records
+            .fetch_add(entries.len() as u64, Ordering::Relaxed);
+        self.metrics
+            .wal_bytes
+            .fetch_add(wal_bytes, Ordering::Relaxed);
+        Ok(())
     }
 
     fn save_manifest_metadata_only(&mut self) -> Result<()> {
@@ -781,4 +865,18 @@ fn decode_location(bytes: &[u8]) -> Option<PhysicalLocation> {
         record_offset,
         length,
     })
+}
+
+fn estimated_wal_entry_bytes(entry: &StorageWalEntry) -> u64 {
+    const WAL_RECORD_HEADER_BYTES: u64 = 8;
+    WAL_RECORD_HEADER_BYTES
+        + 8
+        + entry.index_type.len() as u64
+        + entry.key.len() as u64
+        + entry.rid.map(|_| 8).unwrap_or(0)
+        + 1
+}
+
+fn record_latency(tracker: &LatencyTracker, started: Instant) {
+    tracker.record(started.elapsed().as_micros().min(u128::from(u64::MAX)) as u64);
 }

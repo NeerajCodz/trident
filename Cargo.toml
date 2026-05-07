@@ -170,6 +170,10 @@ name = "sql_btree_page"
 path = "tests/sql/btree_page_test.rs"
 
 [[test]]
+name = "sql_btree_page_manager"
+path = "tests/sql/btree_page_manager_test.rs"
+
+[[test]]
 name = "graph_query_primitives"
 path = "tests/graph/query_primitives_test.rs"
 

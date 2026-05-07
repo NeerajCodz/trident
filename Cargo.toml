@@ -134,6 +134,10 @@ name = "concurrency_stress"
 path = "tests/concurrency/stress_test.rs"
 
 [[test]]
+name = "concurrency_sharded_cache"
+path = "tests/concurrency/sharded_cache_test.rs"
+
+[[test]]
 name = "accel_cpu"
 path = "tests/accel/cpu_test.rs"
 

@@ -1,8 +1,12 @@
+use crate::datatype::{
+    DataTypeRegistry, ExternalPointer, SegmentFamily, StorageClass, TridentValue, TypeCode,
+};
 use crate::errors::{Result, TridentError};
 use crate::identity::{Aid, Cid, Did, Eid, Fid, FieldId, Pid, Rid, Sid, SlotAddress, Vid};
 use crate::io::{BinaryReader, BinaryWriter, crc32c};
 use crate::layout::TridentLayout;
 use crate::page::{RecordPage, SlotDirectoryEntry};
+use crate::segments::{BlobLocation, BlobStore};
 use crate::wal::{PageWal, PageWalMutation, PageWalRecord};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -11,6 +15,8 @@ use std::path::{Path, PathBuf};
 
 const RID_DIRECTORY_MAGIC: u32 = 0x5452_4944;
 const RID_DIRECTORY_VERSION: u8 = 1;
+const TYPED_RECORD_MAGIC: u32 = 0x5456_4944;
+const TYPED_RECORD_VERSION: u8 = 1;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct FieldOffset {
@@ -259,6 +265,74 @@ impl PageRecordStore {
         self.delete(rid)
     }
 
+    pub fn put_typed(&mut self, fields: &[(FieldId, TridentValue)]) -> Result<Rid> {
+        let encoded = self.encode_typed_record(fields)?;
+        self.put(&[(FieldId::Dynamic(Did(0xffff)), encoded.as_slice())])
+    }
+
+    pub fn get_typed_field_bytes(&self, rid: Rid, field: FieldId) -> Result<Vec<u8>> {
+        let body = self.get(rid)?;
+        let cells = decode_typed_record(&body, Path::new("typed-record"))?;
+        let cell = cells
+            .into_iter()
+            .find(|cell| cell.field == field)
+            .ok_or(TridentError::KeyNotFound)?;
+        match cell.storage_class {
+            StorageClass::Inline => Ok(cell.inline_bytes),
+            StorageClass::External => {
+                let ExternalPointer::Overflow {
+                    page_id,
+                    offset,
+                    len,
+                    checksum,
+                } = cell.pointer.ok_or_else(|| TridentError::Corrupt {
+                    path: PathBuf::from("typed-record"),
+                    reason: "external typed cell is missing overflow pointer".to_string(),
+                })?
+                else {
+                    return Err(TridentError::Corrupt {
+                        path: PathBuf::from("typed-record"),
+                        reason: "external typed cell has non-overflow pointer".to_string(),
+                    });
+                };
+                self.overflow_store()?.read(&BlobLocation {
+                    family: None,
+                    file_id: page_id,
+                    offset: offset as u64,
+                    len,
+                    checksum,
+                })
+            }
+            StorageClass::Segment => {
+                let ExternalPointer::Segment {
+                    family,
+                    segment_id,
+                    offset,
+                    len,
+                } = cell.pointer.ok_or_else(|| TridentError::Corrupt {
+                    path: PathBuf::from("typed-record"),
+                    reason: "segment typed cell is missing segment pointer".to_string(),
+                })?
+                else {
+                    return Err(TridentError::Corrupt {
+                        path: PathBuf::from("typed-record"),
+                        reason: "segment typed cell has non-segment pointer".to_string(),
+                    });
+                };
+                self.segment_store(family)?.read(&BlobLocation {
+                    family: Some(family),
+                    file_id: segment_id,
+                    offset,
+                    len,
+                    checksum: 0,
+                })
+            }
+            StorageClass::Catalog => Err(TridentError::InvalidConfig(
+                "catalog-backed values are resolved through catalog stores".to_string(),
+            )),
+        }
+    }
+
     pub fn replay_page_wal(&mut self, records: &[PageWalRecord]) -> Result<()> {
         for record in records {
             self.apply_page_wal_record(record)?;
@@ -432,6 +506,77 @@ impl PageRecordStore {
         self.directory
             .save_binary(&path, self.next_rid, self.next_sid, self.current_pid)
     }
+
+    fn encode_typed_record(&self, fields: &[(FieldId, TridentValue)]) -> Result<Vec<u8>> {
+        let mut cells = Vec::with_capacity(fields.len());
+        for (field, value) in fields {
+            let encoded = DataTypeRegistry::encode(value)?;
+            let payload = value.payload_bytes()?;
+            let cell = match encoded.storage_class {
+                StorageClass::Inline => TypedFieldCell {
+                    field: *field,
+                    type_code: encoded.type_code,
+                    storage_class: StorageClass::Inline,
+                    inline_bytes: encoded.inline_bytes,
+                    pointer: None,
+                },
+                StorageClass::External => {
+                    let location = self.overflow_store()?.append(&payload)?;
+                    TypedFieldCell {
+                        field: *field,
+                        type_code: encoded.type_code,
+                        storage_class: StorageClass::External,
+                        inline_bytes: Vec::new(),
+                        pointer: Some(ExternalPointer::Overflow {
+                            page_id: location.file_id,
+                            offset: location.offset as u32,
+                            len: location.len,
+                            checksum: location.checksum,
+                        }),
+                    }
+                }
+                StorageClass::Segment => {
+                    let family = pointer_family(encoded.pointer)?;
+                    let location = self.segment_store(family)?.append(&payload)?;
+                    TypedFieldCell {
+                        field: *field,
+                        type_code: encoded.type_code,
+                        storage_class: StorageClass::Segment,
+                        inline_bytes: Vec::new(),
+                        pointer: Some(ExternalPointer::Segment {
+                            family,
+                            segment_id: location.file_id,
+                            offset: location.offset,
+                            len: location.len,
+                        }),
+                    }
+                }
+                StorageClass::Catalog => TypedFieldCell {
+                    field: *field,
+                    type_code: encoded.type_code,
+                    storage_class: StorageClass::Catalog,
+                    inline_bytes: Vec::new(),
+                    pointer: encoded.pointer,
+                },
+            };
+            cells.push(cell);
+        }
+        encode_typed_cells(&cells)
+    }
+
+    fn overflow_store(&self) -> Result<BlobStore> {
+        BlobStore::open_overflow(self.layout.overflow_blob_path(self.cid, self.eid).path)
+    }
+
+    fn segment_store(&self, family: SegmentFamily) -> Result<BlobStore> {
+        BlobStore::open_segment(
+            self.layout
+                .segment_blob_path(self.cid, self.eid, family)
+                .path,
+            family,
+            1,
+        )
+    }
 }
 
 fn corrupt<T>(path: &Path, reason: &str) -> Result<T> {
@@ -439,4 +584,253 @@ fn corrupt<T>(path: &Path, reason: &str) -> Result<T> {
         path: path.to_path_buf(),
         reason: reason.to_string(),
     })
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct TypedFieldCell {
+    field: FieldId,
+    type_code: TypeCode,
+    storage_class: StorageClass,
+    inline_bytes: Vec<u8>,
+    pointer: Option<ExternalPointer>,
+}
+
+fn encode_typed_cells(cells: &[TypedFieldCell]) -> Result<Vec<u8>> {
+    let mut payload = BinaryWriter::new();
+    payload.write_u32(cells.len() as u32);
+    for cell in cells {
+        write_field(&mut payload, cell.field);
+        payload.write_u8(cell.type_code as u8);
+        payload.write_u8(storage_class_to_tag(cell.storage_class));
+        payload.write_len_bytes(&cell.inline_bytes);
+        write_external_pointer(&mut payload, cell.pointer.clone());
+    }
+    let payload = payload.into_inner();
+    let mut out = BinaryWriter::new();
+    out.write_u32(TYPED_RECORD_MAGIC);
+    out.write_u8(TYPED_RECORD_VERSION);
+    out.write_u32(payload.len() as u32);
+    out.write_u32(crc32c(&payload));
+    out.write_bytes(&payload);
+    Ok(out.into_inner())
+}
+
+fn decode_typed_record(bytes: &[u8], source: &Path) -> Result<Vec<TypedFieldCell>> {
+    if bytes.len() < 13 {
+        return corrupt(source, "truncated typed record header");
+    }
+    if u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) != TYPED_RECORD_MAGIC {
+        return corrupt(source, "bad typed record magic");
+    }
+    if bytes[4] != TYPED_RECORD_VERSION {
+        return corrupt(
+            source,
+            &format!("unsupported typed record version {}", bytes[4]),
+        );
+    }
+    let len = u32::from_le_bytes([bytes[5], bytes[6], bytes[7], bytes[8]]) as usize;
+    let expected = u32::from_le_bytes([bytes[9], bytes[10], bytes[11], bytes[12]]);
+    if bytes.len() < 13 + len {
+        return corrupt(source, "truncated typed record payload");
+    }
+    let payload = &bytes[13..13 + len];
+    let actual = crc32c(payload);
+    if actual != expected {
+        return corrupt(
+            source,
+            &format!(
+                "typed record checksum mismatch: expected {expected:#010x}, got {actual:#010x}"
+            ),
+        );
+    }
+    let mut reader = BinaryReader::new(payload, source.to_path_buf());
+    let count = reader.read_u32()? as usize;
+    let mut cells = Vec::with_capacity(count);
+    for _ in 0..count {
+        cells.push(TypedFieldCell {
+            field: read_field(&mut reader, source)?,
+            type_code: tag_to_type_code(reader.read_u8()?, source)?,
+            storage_class: tag_to_storage_class(reader.read_u8()?, source)?,
+            inline_bytes: reader.read_len_bytes()?,
+            pointer: read_external_pointer(&mut reader, source)?,
+        });
+    }
+    Ok(cells)
+}
+
+fn pointer_family(pointer: Option<ExternalPointer>) -> Result<SegmentFamily> {
+    match pointer {
+        Some(ExternalPointer::Segment { family, .. }) => Ok(family),
+        _ => Err(TridentError::InvalidConfig(
+            "segment value did not include segment family".to_string(),
+        )),
+    }
+}
+
+fn write_field(writer: &mut BinaryWriter, field: FieldId) {
+    match field {
+        FieldId::Fixed(aid) => {
+            writer.write_u8(1);
+            writer.write_u32(aid.0 as u32);
+        }
+        FieldId::Dynamic(did) => {
+            writer.write_u8(2);
+            writer.write_u32(did.0 as u32);
+        }
+    }
+}
+
+fn read_field(reader: &mut BinaryReader<'_>, source: &Path) -> Result<FieldId> {
+    match reader.read_u8()? {
+        1 => Ok(FieldId::Fixed(Aid(reader.read_u32()? as u16))),
+        2 => Ok(FieldId::Dynamic(Did(reader.read_u32()? as u16))),
+        tag => corrupt(source, &format!("invalid typed field tag {tag}")),
+    }
+}
+
+fn write_external_pointer(writer: &mut BinaryWriter, pointer: Option<ExternalPointer>) {
+    match pointer {
+        None => writer.write_u8(0),
+        Some(ExternalPointer::Overflow {
+            page_id,
+            offset,
+            len,
+            checksum,
+        }) => {
+            writer.write_u8(1);
+            writer.write_u64(page_id);
+            writer.write_u32(offset);
+            writer.write_u32(len);
+            writer.write_u32(checksum);
+        }
+        Some(ExternalPointer::Segment {
+            family,
+            segment_id,
+            offset,
+            len,
+        }) => {
+            writer.write_u8(2);
+            writer.write_u8(segment_family_to_tag(family));
+            writer.write_u64(segment_id);
+            writer.write_u64(offset);
+            writer.write_u32(len);
+        }
+        Some(ExternalPointer::Catalog { catalog, key }) => {
+            writer.write_u8(3);
+            writer.write_len_bytes(catalog.as_bytes());
+            writer.write_u64(key);
+        }
+    }
+}
+
+fn read_external_pointer(
+    reader: &mut BinaryReader<'_>,
+    source: &Path,
+) -> Result<Option<ExternalPointer>> {
+    match reader.read_u8()? {
+        0 => Ok(None),
+        1 => Ok(Some(ExternalPointer::Overflow {
+            page_id: reader.read_u64()?,
+            offset: reader.read_u32()?,
+            len: reader.read_u32()?,
+            checksum: reader.read_u32()?,
+        })),
+        2 => Ok(Some(ExternalPointer::Segment {
+            family: tag_to_segment_family(reader.read_u8()?, source)?,
+            segment_id: reader.read_u64()?,
+            offset: reader.read_u64()?,
+            len: reader.read_u32()?,
+        })),
+        3 => {
+            let catalog = String::from_utf8(reader.read_len_bytes()?)
+                .map_err(|err| TridentError::InvalidConfig(err.to_string()))?;
+            Ok(Some(ExternalPointer::Catalog {
+                catalog,
+                key: reader.read_u64()?,
+            }))
+        }
+        tag => corrupt(source, &format!("invalid typed pointer tag {tag}")),
+    }
+}
+
+fn storage_class_to_tag(storage_class: StorageClass) -> u8 {
+    match storage_class {
+        StorageClass::Inline => 1,
+        StorageClass::External => 2,
+        StorageClass::Segment => 3,
+        StorageClass::Catalog => 4,
+    }
+}
+
+fn tag_to_storage_class(tag: u8, source: &Path) -> Result<StorageClass> {
+    match tag {
+        1 => Ok(StorageClass::Inline),
+        2 => Ok(StorageClass::External),
+        3 => Ok(StorageClass::Segment),
+        4 => Ok(StorageClass::Catalog),
+        _ => corrupt(source, &format!("invalid storage class tag {tag}")),
+    }
+}
+
+fn segment_family_to_tag(family: SegmentFamily) -> u8 {
+    match family {
+        SegmentFamily::Vector => 1,
+        SegmentFamily::Edge => 2,
+        SegmentFamily::FullText => 3,
+    }
+}
+
+fn tag_to_segment_family(tag: u8, source: &Path) -> Result<SegmentFamily> {
+    match tag {
+        1 => Ok(SegmentFamily::Vector),
+        2 => Ok(SegmentFamily::Edge),
+        3 => Ok(SegmentFamily::FullText),
+        _ => corrupt(source, &format!("invalid segment family tag {tag}")),
+    }
+}
+
+fn tag_to_type_code(tag: u8, source: &Path) -> Result<TypeCode> {
+    match tag {
+        0x01 => Ok(TypeCode::Int2),
+        0x02 => Ok(TypeCode::Int4),
+        0x03 => Ok(TypeCode::Int8),
+        0x04 => Ok(TypeCode::UInt8),
+        0x10 => Ok(TypeCode::Float4),
+        0x11 => Ok(TypeCode::Float8),
+        0x12 => Ok(TypeCode::Numeric),
+        0x20 => Ok(TypeCode::Bool),
+        0x30 => Ok(TypeCode::TextInline),
+        0x31 => Ok(TypeCode::Json),
+        0x32 => Ok(TypeCode::Jsonb),
+        0x40 => Ok(TypeCode::Uuid),
+        0x50 => Ok(TypeCode::Date),
+        0x51 => Ok(TypeCode::Time),
+        0x53 => Ok(TypeCode::Timestamp),
+        0x60 => Ok(TypeCode::Money),
+        0x61 => Ok(TypeCode::Enum),
+        0x70 => Ok(TypeCode::Bytea),
+        0x80 => Ok(TypeCode::List),
+        0x81 => Ok(TypeCode::Set),
+        0x82 => Ok(TypeCode::Dict),
+        0x83 => Ok(TypeCode::Range),
+        0x90 => Ok(TypeCode::Vec32),
+        0x91 => Ok(TypeCode::Vec16),
+        0x92 => Ok(TypeCode::Vec8),
+        0x93 => Ok(TypeCode::VecBin),
+        0x94 => Ok(TypeCode::Embedding),
+        0x95 => Ok(TypeCode::SparseVec),
+        0xA0 => Ok(TypeCode::EdgeRef),
+        0xA1 => Ok(TypeCode::EdgeList),
+        0xA2 => Ok(TypeCode::Path),
+        0xA3 => Ok(TypeCode::Subgraph),
+        0xB0 => Ok(TypeCode::TsVector),
+        0xC0 => Ok(TypeCode::GeoPoint),
+        0xC1 => Ok(TypeCode::GeoShape),
+        0xD0 => Ok(TypeCode::Cidr),
+        0xD1 => Ok(TypeCode::Inet),
+        0xE0 => Ok(TypeCode::CommitRef),
+        0xE1 => Ok(TypeCode::BranchRef),
+        0xE2 => Ok(TypeCode::RidRef),
+        _ => corrupt(source, &format!("invalid type code tag {tag:#04x}")),
+    }
 }

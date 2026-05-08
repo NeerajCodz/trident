@@ -1,3 +1,4 @@
+use trident::datatype::{SegmentFamily, TridentValue};
 use trident::identity::{Aid, Cid, Eid, Fid, FieldId, Pid, Rid, Sid, SlotAddress};
 use trident::page::RecordPage;
 use trident::record::{PageRecordStore, RecordSlot, RidDirectory};
@@ -131,4 +132,61 @@ fn page_record_store_deletes_slot_without_reusing_rid() {
     )
     .unwrap();
     assert!(page.slots()[0].tombstone);
+}
+
+#[test]
+fn page_record_store_places_typed_values_by_storage_class() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = PageRecordStore::open(dir.path(), Cid(1), Eid(2)).unwrap();
+    let large_text = "x".repeat(300);
+    let rid = store
+        .put_typed(&[
+            (FieldId::Fixed(Aid(1)), TridentValue::Int4(92)),
+            (
+                FieldId::Fixed(Aid(2)),
+                TridentValue::Text(large_text.clone()),
+            ),
+            (
+                FieldId::Fixed(Aid(3)),
+                TridentValue::Vec32 {
+                    dims: 2,
+                    data: vec![1.0, 2.0],
+                },
+            ),
+        ])
+        .unwrap();
+
+    assert_eq!(
+        store
+            .get_typed_field_bytes(rid, FieldId::Fixed(Aid(1)))
+            .unwrap(),
+        92_i32.to_le_bytes()
+    );
+    assert_eq!(
+        store
+            .get_typed_field_bytes(rid, FieldId::Fixed(Aid(2)))
+            .unwrap(),
+        large_text.as_bytes()
+    );
+    assert_eq!(
+        store
+            .get_typed_field_bytes(rid, FieldId::Fixed(Aid(3)))
+            .unwrap()
+            .len(),
+        10
+    );
+    assert!(
+        store
+            .layout()
+            .overflow_blob_path(Cid(1), Eid(2))
+            .path
+            .exists()
+    );
+    assert!(
+        store
+            .layout()
+            .segment_blob_path(Cid(1), Eid(2), SegmentFamily::Vector)
+            .path
+            .exists()
+    );
 }

@@ -214,6 +214,85 @@ impl DataTypeRegistry {
     }
 }
 
+impl TridentValue {
+    pub fn payload_bytes(&self) -> Result<Vec<u8>> {
+        match self {
+            Self::Int2(value) => Ok(value.to_le_bytes().to_vec()),
+            Self::Int4(value) => Ok(value.to_le_bytes().to_vec()),
+            Self::Int8(value) => Ok(value.to_le_bytes().to_vec()),
+            Self::UInt8(value) => Ok(value.to_le_bytes().to_vec()),
+            Self::Float4(value) => Ok(value.to_le_bytes().to_vec()),
+            Self::Float8(value) => Ok(value.to_le_bytes().to_vec()),
+            Self::Bool(value) => Ok(vec![u8::from(*value)]),
+            Self::Text(value) => Ok(value.as_bytes().to_vec()),
+            Self::Json(value) | Self::Jsonb(value) | Self::Bytea(value) | Self::TsVector(value) => {
+                Ok(value.clone())
+            }
+            Self::Uuid(value) => Ok(value.to_vec()),
+            Self::Date(value) => Ok(value.to_le_bytes().to_vec()),
+            Self::TimeMicros(value) | Self::TimestampMicros(value) => {
+                Ok(value.to_le_bytes().to_vec())
+            }
+            Self::Money {
+                amount,
+                currency,
+                scale,
+            } => {
+                let mut bytes = Vec::with_capacity(12);
+                bytes.extend_from_slice(&amount.to_le_bytes());
+                bytes.extend_from_slice(currency);
+                bytes.push(*scale);
+                Ok(bytes)
+            }
+            Self::Enum(value) => Ok(value.to_le_bytes().to_vec()),
+            Self::List {
+                element_type,
+                encoded_elements,
+            } => {
+                let mut bytes = Vec::with_capacity(5 + encoded_elements.len());
+                bytes.extend_from_slice(&(encoded_elements.len() as u32).to_le_bytes());
+                bytes.push(*element_type as u8);
+                bytes.extend_from_slice(encoded_elements);
+                Ok(bytes)
+            }
+            Self::Vec32 { dims, data } => {
+                if *dims as usize != data.len() {
+                    return Err(TridentError::InvalidConfig(
+                        "vec32 dimensions do not match data length".to_string(),
+                    ));
+                }
+                let mut bytes = Vec::with_capacity(2 + data.len() * 4);
+                bytes.extend_from_slice(&dims.to_le_bytes());
+                for value in data {
+                    bytes.extend_from_slice(&value.to_le_bytes());
+                }
+                Ok(bytes)
+            }
+            Self::EdgeRef {
+                source,
+                target,
+                edge_type,
+                weight_bits,
+                created_at,
+            } => {
+                let mut bytes = Vec::with_capacity(32);
+                bytes.extend_from_slice(&source.0.to_le_bytes());
+                bytes.extend_from_slice(&target.0.to_le_bytes());
+                bytes.extend_from_slice(&edge_type.to_le_bytes());
+                bytes.extend_from_slice(&weight_bits.to_le_bytes());
+                bytes.extend_from_slice(&created_at.to_le_bytes());
+                Ok(bytes)
+            }
+            Self::RidRef { collection, rid } => {
+                let mut bytes = Vec::with_capacity(12);
+                bytes.extend_from_slice(&collection.0.to_le_bytes());
+                bytes.extend_from_slice(&rid.0.to_le_bytes());
+                Ok(bytes)
+            }
+        }
+    }
+}
+
 fn inline<const N: usize>(type_code: TypeCode, bytes: [u8; N]) -> Result<EncodedValue> {
     Ok(inline_vec(type_code, bytes.to_vec()))
 }

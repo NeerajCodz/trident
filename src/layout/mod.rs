@@ -1,3 +1,4 @@
+use crate::datatype::SegmentFamily;
 use crate::errors::Result;
 use crate::identity::{Cid, Eid, Fid, Pid};
 use serde::{Deserialize, Serialize};
@@ -122,6 +123,27 @@ impl TridentLayout {
                 .join("kv")
                 .join("critical")
                 .join(format!("{name}.kv")),
+        )
+    }
+
+    pub fn overflow_blob_path(&self, cid: Cid, eid: Eid) -> LayoutPath {
+        self.layout_path(
+            DurableLayoutKind::Segment,
+            self.entity_root(cid, eid)
+                .join("overflow")
+                .join("overflow-0001.blob"),
+        )
+    }
+
+    pub fn segment_blob_path(&self, cid: Cid, eid: Eid, family: SegmentFamily) -> LayoutPath {
+        let (dir, file) = match family {
+            SegmentFamily::Vector => ("vectors", "vector-0001.seg"),
+            SegmentFamily::Edge => ("graph", "edge-0001.seg"),
+            SegmentFamily::FullText => ("fulltext", "fulltext-0001.seg"),
+        };
+        self.layout_path(
+            DurableLayoutKind::Segment,
+            self.entity_root(cid, eid).join(dir).join(file),
         )
     }
 

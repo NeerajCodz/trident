@@ -109,7 +109,7 @@ impl BlobStore {
         let mut reader = BinaryReader::new(&bytes[start..], self.path.clone());
         let len = reader.read_u32()?;
         let expected = reader.read_u32()?;
-        if len != location.len || expected != location.checksum {
+        if len != location.len || (location.checksum != 0 && expected != location.checksum) {
             return corrupt(&self.path, "blob location metadata mismatch");
         }
         let mut data = Vec::with_capacity(len as usize);

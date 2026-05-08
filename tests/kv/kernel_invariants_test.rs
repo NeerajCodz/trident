@@ -1,8 +1,9 @@
 use trident::errors::Result;
 use trident::index::{IndexPlugin, IndexStats, IndexStorageLayout};
 use trident::kernel::{
-    CanonicalValuePolicy, DurableFormatDescriptor, EngineCapability, PhysicalEngine,
-    PhysicalEngineKind,
+    CanonicalValuePolicy, DurableArtifactDescriptor, DurableArtifactKind, DurableArtifactState,
+    DurableFormatDescriptor, EngineCapability, KernelInvariant, KernelInvariantValidator,
+    PhysicalEngine, PhysicalEngineKind, StorageOperationMetrics,
 };
 use trident::store::{RecordId, StorageEngine};
 
@@ -64,6 +65,60 @@ fn durable_format_descriptor_requires_version_checksum_and_recovery() {
     };
 
     assert!(descriptor.validate().is_ok());
+}
+
+#[test]
+fn kernel_validator_rejects_unmeasured_visible_writes() {
+    let err =
+        KernelInvariantValidator::validate_write(false, true, StorageOperationMetrics::default())
+            .unwrap_err();
+
+    assert!(err.to_string().contains("WAL durability"));
+}
+
+#[test]
+fn kernel_validator_accepts_manifest_tracked_artifacts() {
+    let artifact = DurableArtifactDescriptor {
+        logical_name: "wal_segment:0001".to_string(),
+        path: "wal/storage.00000000000000000001.swal".into(),
+        kind: DurableArtifactKind::WalSegment,
+        state: DurableArtifactState::Installed,
+        format: DurableFormatDescriptor {
+            structure: "wal_segment",
+            format_version: 1,
+            checksum: "record_crc32",
+            forward_compatible: true,
+            independently_recoverable: true,
+        },
+    };
+
+    let report = KernelInvariantValidator::validate_engine_open(&[artifact]).unwrap();
+    assert!(
+        report
+            .checked
+            .contains(&KernelInvariant::ManifestTrackedDurability)
+    );
+}
+
+#[test]
+fn kernel_validator_requires_deterministic_recovery_order() {
+    let report = KernelInvariantValidator::validate_recovery_plan(&[
+        "wal_replay",
+        "manifest_reconcile",
+        "record_directory_repair",
+        "index_replay",
+        "compaction_cleanup",
+        "tier_migration_cleanup",
+    ])
+    .unwrap();
+
+    assert_eq!(
+        report.checked,
+        vec![KernelInvariant::DeterministicCrashRecovery]
+    );
+    assert!(
+        KernelInvariantValidator::validate_recovery_plan(&["index_replay", "wal_replay"]).is_err()
+    );
 }
 
 #[test]

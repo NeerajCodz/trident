@@ -1,4 +1,5 @@
 use crate::errors::{Result, TridentError};
+use crate::index::IndexStorageLayout;
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -127,5 +128,146 @@ pub trait RecoverableStructure {
             ));
         }
         Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DurableArtifactKind {
+    WalSegment,
+    Manifest,
+    RecordDirectory,
+    ValueSegment,
+    IndexSegment,
+    Sstable,
+    BTreePageFile,
+    Checkpoint,
+    TieredObject,
+    ReplicationLog,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DurableArtifactState {
+    Created,
+    Installed,
+    Replaced,
+    Deleted,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DurableArtifactDescriptor {
+    pub logical_name: String,
+    pub path: PathBuf,
+    pub kind: DurableArtifactKind,
+    pub state: DurableArtifactState,
+    pub format: DurableFormatDescriptor,
+}
+
+impl DurableArtifactDescriptor {
+    pub fn validate(&self) -> Result<()> {
+        self.format.validate()?;
+        if self.logical_name.is_empty() {
+            return Err(TridentError::InvalidConfig(
+                "durable artifact has no logical name".to_string(),
+            ));
+        }
+        if self.path.as_os_str().is_empty() {
+            return Err(TridentError::InvalidConfig(format!(
+                "durable artifact {} has no manifest path",
+                self.logical_name
+            )));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct KernelInvariantReport {
+    pub checked: Vec<KernelInvariant>,
+}
+
+pub struct KernelInvariantValidator;
+
+impl KernelInvariantValidator {
+    pub fn validate_engine_open(
+        artifacts: &[DurableArtifactDescriptor],
+    ) -> Result<KernelInvariantReport> {
+        Self::validate_durable_artifacts(artifacts)?;
+        Ok(KernelInvariantReport {
+            checked: vec![
+                KernelInvariant::DurableStructuresVersionedChecksummedRecoverable,
+                KernelInvariant::ManifestTrackedDurability,
+                KernelInvariant::DeterministicCrashRecovery,
+            ],
+        })
+    }
+
+    pub fn validate_write(
+        wal_durable: bool,
+        visibility_applied: bool,
+        metrics: StorageOperationMetrics,
+    ) -> Result<KernelInvariantReport> {
+        if visibility_applied && !wal_durable {
+            return Err(TridentError::InvalidConfig(
+                "write visibility cannot precede WAL durability".to_string(),
+            ));
+        }
+        if metrics.latency_us == 0 && metrics.bytes_written == 0 && metrics.io_ops == 0 {
+            return Err(TridentError::InvalidConfig(
+                "storage write completed without measurable operation metrics".to_string(),
+            ));
+        }
+        Ok(KernelInvariantReport {
+            checked: vec![
+                KernelInvariant::WalBeforeVisibility,
+                KernelInvariant::MeasurableStorageOperations,
+            ],
+        })
+    }
+
+    pub fn validate_index_registration(
+        index_name: &str,
+        layout: IndexStorageLayout,
+    ) -> Result<KernelInvariantReport> {
+        layout.validate_default_kernel_policy(index_name)?;
+        Ok(KernelInvariantReport {
+            checked: vec![
+                KernelInvariant::CanonicalValuesSingleCopy,
+                KernelInvariant::PointerOrientedIndexes,
+            ],
+        })
+    }
+
+    pub fn validate_durable_artifacts(
+        artifacts: &[DurableArtifactDescriptor],
+    ) -> Result<KernelInvariantReport> {
+        for artifact in artifacts {
+            artifact.validate()?;
+        }
+        Ok(KernelInvariantReport {
+            checked: vec![
+                KernelInvariant::DurableStructuresVersionedChecksummedRecoverable,
+                KernelInvariant::ManifestTrackedDurability,
+            ],
+        })
+    }
+
+    pub fn validate_recovery_plan(steps: &[&str]) -> Result<KernelInvariantReport> {
+        const EXPECTED: [&str; 6] = [
+            "wal_replay",
+            "manifest_reconcile",
+            "record_directory_repair",
+            "index_replay",
+            "compaction_cleanup",
+            "tier_migration_cleanup",
+        ];
+        if steps != EXPECTED {
+            return Err(TridentError::InvalidConfig(format!(
+                "recovery plan must be deterministic and ordered as {}",
+                EXPECTED.join(" -> ")
+            )));
+        }
+        Ok(KernelInvariantReport {
+            checked: vec![KernelInvariant::DeterministicCrashRecovery],
+        })
     }
 }

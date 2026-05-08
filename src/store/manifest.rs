@@ -1,4 +1,7 @@
 use crate::errors::Result;
+use crate::kernel::{
+    DurableArtifactDescriptor, DurableArtifactKind, DurableArtifactState, DurableFormatDescriptor,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -21,6 +24,10 @@ pub struct StorageManifest {
     pub maintenance_cycles_run: u64,
     #[serde(default)]
     pub last_maintenance_at_sequence: Option<u64>,
+    #[serde(default)]
+    pub durable_files: Vec<DurableFileRecord>,
+    #[serde(default)]
+    pub edits: Vec<ManifestEdit>,
 }
 
 impl Default for StorageManifest {
@@ -35,6 +42,152 @@ impl Default for StorageManifest {
             last_compacted_at_sequence: HashMap::new(),
             maintenance_cycles_run: 0,
             last_maintenance_at_sequence: None,
+            durable_files: Vec::new(),
+            edits: Vec::new(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum DurableFileKind {
+    WalSegment,
+    Manifest,
+    RecordDirectory,
+    ValueSegment,
+    IndexSegment,
+    Sstable,
+    BTreePageFile,
+    Checkpoint,
+    TieredObject,
+    ReplicationLog,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum DurableFileState {
+    Created,
+    Installed,
+    Replaced,
+    Deleted,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DurableFileRecord {
+    pub logical_name: String,
+    pub path: String,
+    pub kind: DurableFileKind,
+    pub state: DurableFileState,
+    pub format_version: u16,
+    pub checksum: String,
+    pub independently_recoverable: bool,
+    pub forward_compatible: bool,
+}
+
+impl DurableFileRecord {
+    pub fn installed(
+        logical_name: impl Into<String>,
+        path: impl Into<String>,
+        kind: DurableFileKind,
+        format_version: u16,
+        checksum: impl Into<String>,
+    ) -> Self {
+        Self {
+            logical_name: logical_name.into(),
+            path: path.into(),
+            kind,
+            state: DurableFileState::Installed,
+            format_version,
+            checksum: checksum.into(),
+            independently_recoverable: true,
+            forward_compatible: true,
+        }
+    }
+
+    pub fn to_kernel_descriptor(&self) -> DurableArtifactDescriptor {
+        DurableArtifactDescriptor {
+            logical_name: self.logical_name.clone(),
+            path: PathBuf::from(&self.path),
+            kind: self.kind.into(),
+            state: self.state.into(),
+            format: DurableFormatDescriptor {
+                structure: self.kind.structure_name(),
+                format_version: self.format_version,
+                checksum: Box::leak(self.checksum.clone().into_boxed_str()),
+                forward_compatible: self.forward_compatible,
+                independently_recoverable: self.independently_recoverable,
+            },
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum ManifestEdit {
+    DurableFileCreated { logical_name: String, path: String },
+    DurableFileInstalled { logical_name: String, path: String },
+    CompactionStarted { job_id: String },
+    CompactionInstalled { job_id: String },
+    CompactionCleanupComplete { job_id: String },
+    TierMigrationStarted { object_id: String },
+    TierMigrationInstalled { object_id: String },
+}
+
+impl StorageManifest {
+    pub fn set_durable_files(&mut self, files: Vec<DurableFileRecord>) {
+        self.durable_files = files;
+    }
+
+    pub fn append_edit(&mut self, edit: ManifestEdit) {
+        self.edits.push(edit);
+    }
+
+    pub fn kernel_artifacts(&self) -> Vec<DurableArtifactDescriptor> {
+        self.durable_files
+            .iter()
+            .map(DurableFileRecord::to_kernel_descriptor)
+            .collect()
+    }
+}
+
+impl DurableFileKind {
+    fn structure_name(self) -> &'static str {
+        match self {
+            Self::WalSegment => "wal_segment",
+            Self::Manifest => "manifest",
+            Self::RecordDirectory => "record_directory",
+            Self::ValueSegment => "value_segment",
+            Self::IndexSegment => "index_segment",
+            Self::Sstable => "sstable",
+            Self::BTreePageFile => "btree_page_file",
+            Self::Checkpoint => "checkpoint",
+            Self::TieredObject => "tiered_object",
+            Self::ReplicationLog => "replication_log",
+        }
+    }
+}
+
+impl From<DurableFileKind> for DurableArtifactKind {
+    fn from(kind: DurableFileKind) -> Self {
+        match kind {
+            DurableFileKind::WalSegment => Self::WalSegment,
+            DurableFileKind::Manifest => Self::Manifest,
+            DurableFileKind::RecordDirectory => Self::RecordDirectory,
+            DurableFileKind::ValueSegment => Self::ValueSegment,
+            DurableFileKind::IndexSegment => Self::IndexSegment,
+            DurableFileKind::Sstable => Self::Sstable,
+            DurableFileKind::BTreePageFile => Self::BTreePageFile,
+            DurableFileKind::Checkpoint => Self::Checkpoint,
+            DurableFileKind::TieredObject => Self::TieredObject,
+            DurableFileKind::ReplicationLog => Self::ReplicationLog,
+        }
+    }
+}
+
+impl From<DurableFileState> for DurableArtifactState {
+    fn from(state: DurableFileState) -> Self {
+        match state {
+            DurableFileState::Created => Self::Created,
+            DurableFileState::Installed => Self::Installed,
+            DurableFileState::Replaced => Self::Replaced,
+            DurableFileState::Deleted => Self::Deleted,
         }
     }
 }

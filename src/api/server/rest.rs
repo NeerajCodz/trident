@@ -1,5 +1,5 @@
 use crate::maintenance::{JobPriority, MaintenanceRuntimeConfig, RuntimeLaneConfig};
-use crate::storage::manifest::ColumnFamilyDescriptor;
+use crate::manifest::ColumnFamilyDescriptor;
 use crate::slog;
 use crate::{ColumnFamily, Result, TridentConfig, TridentEngine, TridentError, WriteBatch};
 use axum::body::Bytes as BodyBytes;

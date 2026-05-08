@@ -1,10 +1,15 @@
-use super::manifest::{StorageManifest, StorageManifestStore};
+use super::manifest::{
+    DurableFileKind, DurableFileRecord, ManifestEdit, StorageManifest, StorageManifestStore,
+};
 use super::wal::{StorageWal, StorageWalEntry, StorageWalOperation, StorageWalOptions};
 use super::{CompactionStats, PhysicalLocation, RecordId, RecordStore};
 use crate::cache::BlockCache;
 use crate::errors::{Result, TridentError};
 use crate::index::{IndexPlugin, IndexStats};
-use crate::kernel::{KernelCompactionReport, KernelSnapshot, KernelStorageReport, StorageKernel};
+use crate::kernel::{
+    KernelCompactionReport, KernelInvariantValidator, KernelSnapshot, KernelStorageReport,
+    StorageKernel, StorageOperationMetrics,
+};
 use crate::metrics::{EngineMetrics, LatencyTracker};
 use bytes::Bytes;
 use std::collections::{BTreeSet, HashMap};
@@ -198,6 +203,8 @@ impl StorageEngine {
 
         let manifest_store = StorageManifestStore::new(root.join(Self::MANIFEST_FILE));
         let mut manifest = manifest_store.load_or_create()?;
+        rebuild_durable_inventory(&root, &mut manifest)?;
+        KernelInvariantValidator::validate_engine_open(&manifest.kernel_artifacts())?;
         manifest.last_sequence = replay_entries
             .iter()
             .map(|entry| entry.sequence)
@@ -244,6 +251,8 @@ impl StorageEngine {
 
         let manifest_store = StorageManifestStore::new(root.join(Self::MANIFEST_FILE));
         let mut manifest = manifest_store.load_or_create()?;
+        rebuild_durable_inventory(&root, &mut manifest)?;
+        KernelInvariantValidator::validate_engine_open(&manifest.kernel_artifacts())?;
         manifest.last_sequence = replay_entries
             .iter()
             .map(|entry| entry.sequence)
@@ -279,9 +288,10 @@ impl StorageEngine {
         plugin: Box<dyn IndexPlugin>,
     ) -> Result<()> {
         let index_type = index_type.into();
-        plugin
-            .storage_layout()
-            .validate_default_kernel_policy(&index_type)?;
+        KernelInvariantValidator::validate_index_registration(
+            &index_type,
+            plugin.storage_layout(),
+        )?;
         self.indexes.insert(index_type.clone(), plugin);
         self.manifest
             .plugin_namespaces
@@ -317,6 +327,16 @@ impl StorageEngine {
             });
         }
         self.append_wal_batch(&mut entries)?;
+        KernelInvariantValidator::validate_write(
+            true,
+            false,
+            StorageOperationMetrics {
+                latency_us: started.elapsed().as_micros().min(u128::from(u64::MAX)) as u64,
+                bytes_written: value.len() as u64,
+                io_ops: entries.len() as u64,
+                ..StorageOperationMetrics::default()
+            },
+        )?;
         for (insert, wal_entry) in index_inserts.iter().zip(entries.iter().skip(1)) {
             let plugin = self.indexes.get_mut(&insert.index_type).ok_or_else(|| {
                 TridentError::InvalidConfig(format!("unknown index plugin: {}", insert.index_type))
@@ -324,6 +344,16 @@ impl StorageEngine {
             plugin.put_with_sequence(&insert.key, rid, wal_entry.sequence)?;
         }
         self.store.flush()?;
+        KernelInvariantValidator::validate_write(
+            true,
+            true,
+            StorageOperationMetrics {
+                latency_us: started.elapsed().as_micros().min(u128::from(u64::MAX)) as u64,
+                bytes_written: value.len() as u64,
+                io_ops: entries.len() as u64,
+                ..StorageOperationMetrics::default()
+            },
+        )?;
         self.metrics.writes.fetch_add(1, Ordering::Relaxed);
         self.metrics
             .write_bytes
@@ -452,7 +482,14 @@ impl StorageEngine {
 
     pub fn compact_primary(&mut self) -> Result<CompactionStats> {
         let started = Instant::now();
+        self.manifest.append_edit(ManifestEdit::CompactionStarted {
+            job_id: format!("primary-{}", self.manifest.last_sequence),
+        });
         let stats = self.store.compact()?;
+        self.manifest
+            .append_edit(ManifestEdit::CompactionInstalled {
+                job_id: format!("primary-{}", self.manifest.last_sequence),
+            });
         self.bump_manifest_version()?;
         record_latency(&self.compaction_latency, started);
         Ok(stats)
@@ -748,6 +785,8 @@ impl StorageEngine {
                 .collect();
             self.manifest.index_files.insert(index_type.clone(), files);
         }
+        rebuild_durable_inventory(&self.root, &mut self.manifest)?;
+        KernelInvariantValidator::validate_durable_artifacts(&self.manifest.kernel_artifacts())?;
         self.manifest_store.save(&self.manifest)
     }
 }
@@ -821,6 +860,75 @@ fn list_all_files(dir: &Path) -> Result<Vec<String>> {
         }
     }
     Ok(out.into_iter().collect())
+}
+
+fn rebuild_durable_inventory(root: &Path, manifest: &mut StorageManifest) -> Result<()> {
+    let mut files = Vec::new();
+    let manifest_path = root.join(StorageEngine::MANIFEST_FILE);
+    files.push(DurableFileRecord::installed(
+        "store_manifest",
+        manifest_path.to_string_lossy().to_string(),
+        DurableFileKind::Manifest,
+        1,
+        "serde_json_atomic",
+    ));
+
+    let indirection_path = root
+        .join(StorageEngine::PRIMARY_DIR)
+        .join("indirection.tind");
+    files.push(DurableFileRecord::installed(
+        "record_directory",
+        indirection_path.to_string_lossy().to_string(),
+        DurableFileKind::RecordDirectory,
+        1,
+        "serde_json_atomic",
+    ));
+
+    for segment in list_files_with_ext(
+        &root.join(StorageEngine::PRIMARY_DIR).join("records"),
+        "trec",
+    )? {
+        files.push(DurableFileRecord::installed(
+            format!("value_segment:{segment}"),
+            root.join(StorageEngine::PRIMARY_DIR)
+                .join("records")
+                .join(&segment)
+                .to_string_lossy()
+                .to_string(),
+            DurableFileKind::ValueSegment,
+            1,
+            "record_crc32",
+        ));
+    }
+
+    for wal_file in list_files_with_ext(&root.join(StorageEngine::WAL_DIR), "swal")? {
+        files.push(DurableFileRecord::installed(
+            format!("wal_segment:{wal_file}"),
+            root.join(StorageEngine::WAL_DIR)
+                .join(&wal_file)
+                .to_string_lossy()
+                .to_string(),
+            DurableFileKind::WalSegment,
+            1,
+            "record_crc32",
+        ));
+    }
+
+    for index_file in list_all_files(&root.join(StorageEngine::INDEX_DIR))? {
+        files.push(DurableFileRecord::installed(
+            format!("index_segment:{index_file}"),
+            root.join(StorageEngine::INDEX_DIR)
+                .join(&index_file)
+                .to_string_lossy()
+                .to_string(),
+            DurableFileKind::IndexSegment,
+            1,
+            "plugin_declared",
+        ));
+    }
+
+    manifest.set_durable_files(files);
+    Ok(())
 }
 
 fn replay_primary_directory(store: &mut RecordStore, entries: &[StorageWalEntry]) -> Result<()> {

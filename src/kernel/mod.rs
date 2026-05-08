@@ -5,8 +5,9 @@ use crate::errors::Result;
 use crate::store::RecordId;
 
 pub use invariants::{
-    CanonicalValuePolicy, DurableFormatDescriptor, KernelInvariant, ManifestTracked,
-    MemoryOwnership, RecoverableStructure, StorageOperationMetrics,
+    CanonicalValuePolicy, DurableArtifactDescriptor, DurableArtifactKind, DurableArtifactState,
+    DurableFormatDescriptor, KernelInvariant, KernelInvariantReport, KernelInvariantValidator,
+    ManifestTracked, MemoryOwnership, RecoverableStructure, StorageOperationMetrics,
 };
 pub use physical::{
     AnalyticalProjection, EngineCapability, EngineRole, MaterializedLayout, PhysicalEngine,

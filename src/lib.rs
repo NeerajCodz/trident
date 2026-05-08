@@ -1,7 +1,12 @@
-//! Trident: Production Storage Engine with Single-Copy Guarantee
+//! Trident: primitive-first universal storage kernel with a single-copy guarantee.
 //!
 //! Every piece of data is stored exactly once in the primary data store.
 //! All indexes (LSM, B-tree, Adjacency, HNSW) hold only pointer-to-RecordId mappings.
+//!
+//! The stable storage-kernel surface is `config`, `errors`, `kernel`, `store`, `index`,
+//! `storage`, `transactions`, `api`, `sdk`, and `slog`. Other public modules are still
+//! exported for the current beta/test harness and should be treated as experimental
+//! internals until the compatibility layer is retired.
 
 pub mod accel;
 pub mod api;

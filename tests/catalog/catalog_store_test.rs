@@ -7,6 +7,24 @@ use trident::config::Compression;
 use trident::identity::{Aid, Cid, Did, Eid};
 
 #[test]
+fn catalog_store_loads_empty_doc_shape_catalog_files() {
+    let dir = tempdir().unwrap();
+    let store = CatalogStore::open(dir.path()).unwrap();
+
+    assert_eq!(store.load().unwrap(), CatalogSnapshot::default());
+    assert!(store.layout().catalog_root().join("indexes.cat").exists());
+    assert!(
+        store
+            .layout()
+            .catalog_root()
+            .join("vector_models.cat")
+            .exists()
+    );
+    assert!(store.layout().catalog_root().join("fulltext.cat").exists());
+    assert!(store.layout().catalog_root().join("graph.cat").exists());
+}
+
+#[test]
 fn catalog_store_persists_collection_entity_and_attribute_catalogs() {
     let dir = tempdir().unwrap();
     let store = CatalogStore::open(dir.path()).unwrap();

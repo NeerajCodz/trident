@@ -231,11 +231,12 @@ impl PageRecordStore {
         layout.create_all()?;
         layout.ensure_entity_tree(cid, eid)?;
         let map_path = layout.critical_map_path(cid, "rid_to_slot").path;
-        let (directory, next_rid, next_sid, current_pid) = if map_path.exists() {
-            RidDirectory::load_binary(&map_path)?
-        } else {
-            (RidDirectory::default(), 1, 1, Pid(1))
-        };
+        let (directory, next_rid, next_sid, current_pid) =
+            if map_path.exists() && map_path.metadata()?.len() > 0 {
+                RidDirectory::load_binary(&map_path)?
+            } else {
+                (RidDirectory::default(), 1, 1, Pid(1))
+            };
         Ok(Self {
             layout,
             cid,
@@ -459,6 +460,8 @@ impl PageRecordStore {
     }
 
     fn write_page(&self, pid: Pid, page: &RecordPage) -> Result<()> {
+        self.layout
+            .ensure_frame_tree(self.cid, self.eid, self.fid)?;
         let path = self
             .layout
             .page_path(self.cid, self.eid, self.fid, pid)
@@ -512,6 +515,16 @@ impl PageRecordStore {
             1,
             &slot_directory,
         )?;
+        let page_header = self.load_page(pid)?.header;
+        let mut header = BinaryWriter::new();
+        header.write_u32(page_header.page_size);
+        header.write_u64(page_header.page_lsn);
+        header.write_u32(page_header.slot_count as u32);
+        header.write_u32(page_header.free_space_start);
+        header.write_u32(page_header.free_space_end);
+        std::fs::write(root.join("page.header"), header.into_inner())?;
+        std::fs::write(root.join("fixed.map"), [])?;
+        std::fs::write(root.join("dynamic.map"), [])?;
         std::fs::write(root.join("free.slots"), [])?;
         std::fs::write(root.join("null.bitmap"), [])?;
         std::fs::write(root.join("varlen.map"), [])?;
@@ -528,7 +541,8 @@ impl PageRecordStore {
             "rid-directory",
             RID_DIRECTORY_VERSION as u16,
             &std::fs::read(&path)?,
-        )
+        )?;
+        self.flush_critical_sidecar_maps()
     }
 
     fn encode_typed_record(&self, fields: &[(FieldId, TridentValue)]) -> Result<Vec<u8>> {
@@ -605,6 +619,46 @@ impl PageRecordStore {
     fn manifest_store(&self) -> PageManifestStore {
         PageManifestStore::open(self.layout.page_manifest_path().path)
     }
+
+    fn flush_critical_sidecar_maps(&self) -> Result<()> {
+        let page_path = self.layout.critical_map_path(self.cid, "rid_to_page").path;
+        let entity_path = self
+            .layout
+            .critical_map_path(self.cid, "rid_to_entity")
+            .path;
+        let commit_path = self.layout.critical_map_path(self.cid, "commit_state").path;
+        let sequence_path = self.layout.critical_map_path(self.cid, "sequence").path;
+
+        let mut rid_to_page = BinaryWriter::new();
+        let mut rid_to_entity = BinaryWriter::new();
+        let mut commit_state = BinaryWriter::new();
+        rid_to_page.write_u32(self.directory.mappings.len() as u32);
+        rid_to_entity.write_u32(self.directory.mappings.len() as u32);
+        commit_state.write_u32(self.directory.mappings.len() as u32);
+        for (rid, address) in &self.directory.mappings {
+            rid_to_page.write_u64(rid.0);
+            rid_to_page.write_u32(address.fid.0);
+            rid_to_page.write_u32(address.pid.0);
+            rid_to_page.write_u32(address.sid.0 as u32);
+
+            rid_to_entity.write_u64(rid.0);
+            rid_to_entity.write_u32(address.cid.0);
+            rid_to_entity.write_u32(address.eid.0);
+
+            commit_state.write_u64(rid.0);
+            commit_state.write_u8(1);
+        }
+        let mut sequence = BinaryWriter::new();
+        sequence.write_u64(self.next_rid);
+        sequence.write_u32(self.next_sid as u32);
+        sequence.write_u32(self.current_pid.0);
+
+        write_sidecar(&page_path, rid_to_page.into_inner())?;
+        write_sidecar(&entity_path, rid_to_entity.into_inner())?;
+        write_sidecar(&commit_path, commit_state.into_inner())?;
+        write_sidecar(&sequence_path, sequence.into_inner())?;
+        Ok(())
+    }
 }
 
 fn corrupt<T>(path: &Path, reason: &str) -> Result<T> {
@@ -612,6 +666,14 @@ fn corrupt<T>(path: &Path, reason: &str) -> Result<T> {
         path: path.to_path_buf(),
         reason: reason.to_string(),
     })
+}
+
+fn write_sidecar(path: &Path, bytes: Vec<u8>) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, bytes)?;
+    Ok(())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

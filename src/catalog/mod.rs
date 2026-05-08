@@ -166,7 +166,7 @@ fn read_catalog(path: &Path) -> Result<Vec<u8>> {
 }
 
 fn read_if_exists<T>(path: &Path, decode: fn(&[u8], &Path) -> Result<Vec<T>>) -> Result<Vec<T>> {
-    if path.exists() {
+    if path.exists() && path.metadata()?.len() > 0 {
         decode(&read_catalog(path)?, path)
     } else {
         Ok(Vec::new())

@@ -96,6 +96,41 @@ fn page_record_store_persists_rid_to_page_slot_mapping() {
             .path
             .exists()
     );
+    let slot_root = store
+        .layout()
+        .slot_directory_root(Cid(1), Eid(2), Fid(1), Pid(1));
+    assert!(slot_root.join("page.header").exists());
+    assert!(slot_root.join("fixed.map").exists());
+    assert!(slot_root.join("dynamic.map").exists());
+    assert!(slot_root.join("null.bitmap").exists());
+    assert!(
+        store
+            .layout()
+            .critical_map_path(Cid(1), "rid_to_page")
+            .path
+            .exists()
+    );
+    assert!(
+        store
+            .layout()
+            .critical_map_path(Cid(1), "rid_to_entity")
+            .path
+            .exists()
+    );
+    assert!(
+        store
+            .layout()
+            .critical_map_path(Cid(1), "commit_state")
+            .path
+            .exists()
+    );
+    assert!(
+        store
+            .layout()
+            .critical_map_path(Cid(1), "sequence")
+            .path
+            .exists()
+    );
 
     let reopened = PageRecordStore::open(dir.path(), Cid(1), Eid(2)).unwrap();
     assert_eq!(reopened.get(rid).unwrap(), b"Neeraj");

@@ -116,6 +116,40 @@ impl Vid {
             self.field.raw()
         )
     }
+
+    pub fn from_slot(address: SlotAddress, field: FieldId) -> Self {
+        Self {
+            eid: address.eid,
+            fid: address.fid,
+            pid: address.pid,
+            sid: address.sid,
+            field,
+        }
+    }
+
+    pub fn to_entity_relative(self) -> RelativeVid {
+        RelativeVid::EntityRelative {
+            fid: self.fid,
+            pid: self.pid,
+            sid: self.sid,
+            field: self.field,
+        }
+    }
+
+    pub fn to_frame_relative(self) -> RelativeVid {
+        RelativeVid::FrameRelative {
+            pid: self.pid,
+            sid: self.sid,
+            field: self.field,
+        }
+    }
+
+    pub fn to_page_relative(self) -> RelativeVid {
+        RelativeVid::PageRelative {
+            sid: self.sid,
+            field: self.field,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]

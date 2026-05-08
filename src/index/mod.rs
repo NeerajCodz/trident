@@ -31,14 +31,15 @@ pub use time_series::TimePartition;
 
 use crate::errors::Result;
 use crate::store::RecordId;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct IndexStats {
     pub live_keys: u64,
     pub versions: u64,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct IndexStorageLayout {
     pub stores_full_values: bool,
     pub stores_record_ids: bool,

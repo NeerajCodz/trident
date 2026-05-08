@@ -24,6 +24,7 @@ pub mod metrics;
 pub mod query;
 pub mod recovery;
 pub mod replication;
+pub mod sdk;
 pub mod segments;
 pub mod server;
 pub mod slog;

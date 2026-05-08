@@ -31,6 +31,7 @@ pub use segment::RecordSegment;
 pub use wal::{StorageWal, StorageWalEntry, StorageWalOperation, StorageWalOptions};
 
 use crate::errors::Result;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -42,7 +43,7 @@ use std::path::{Path, PathBuf};
 pub type RecordDirectory = IndirectionTable;
 
 /// Statistics returned by [`RecordStore::compact`].
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct CompactionStats {
     /// Number of live records copied to the new segment.
     pub records_retained: u64,
@@ -52,7 +53,7 @@ pub struct CompactionStats {
     pub bytes_written: u64,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct CanonicalStorageStats {
     pub live_records: u64,
     pub dead_records: u64,

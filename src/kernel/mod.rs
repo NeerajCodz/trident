@@ -3,6 +3,7 @@ pub mod physical;
 
 use crate::errors::Result;
 use crate::store::RecordId;
+use serde::{Deserialize, Serialize};
 
 pub use invariants::{
     CanonicalValuePolicy, DurableArtifactDescriptor, DurableArtifactKind, DurableArtifactState,
@@ -22,19 +23,19 @@ pub enum ExecutionMode {
     Hybrid,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct KernelSnapshot {
     pub sequence: u64,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct KernelCompactionReport {
     pub records_retained: u64,
     pub records_dropped: u64,
     pub bytes_rewritten: u64,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct KernelStorageReport {
     pub live_records: u64,
     pub dead_records: u64,

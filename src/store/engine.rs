@@ -13,6 +13,7 @@ use crate::kernel::{
 use crate::metrics::{EngineMetrics, LatencyTracker};
 use crate::recovery::RecoveryPlan;
 use bytes::Bytes;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
@@ -76,7 +77,7 @@ impl UnifiedBlockCache {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct IndexInsert {
     pub index_type: String,
     pub key: Vec<u8>,
@@ -108,21 +109,21 @@ pub struct StorageEngine {
     opened_at: Instant,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct IndexCompactionReport {
     pub index_type: String,
     pub before: IndexStats,
     pub after: IndexStats,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SuggestedMaintenanceJob {
     pub index_type: String,
     pub reason: String,
     pub estimated_versions_pruned: u64,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct MaintenanceCycleOptions {
     pub stale_version_threshold: u64,
     pub max_jobs: usize,
@@ -137,13 +138,13 @@ impl Default for MaintenanceCycleOptions {
     }
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct MaintenanceCycleReport {
     pub suggested: Vec<SuggestedMaintenanceJob>,
     pub executed: Vec<IndexCompactionReport>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct StorageEngineStats {
     pub manifest_version: u64,
     pub last_sequence: u64,

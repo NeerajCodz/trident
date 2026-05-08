@@ -18,6 +18,8 @@ pub struct Manifest {
     pub latest_checkpoint: Option<CheckpointMetadata>,
     #[serde(default)]
     pub compaction_jobs: Vec<CompactionJobState>,
+    #[serde(default)]
+    pub tier_migrations: Vec<crate::storage::TierMigrationRecord>,
     pub column_families: Vec<ColumnFamilyDescriptor>,
     pub segments: Vec<SegmentMetadata>,
 }
@@ -33,6 +35,7 @@ impl Manifest {
             next_segment_id: 1,
             latest_checkpoint: None,
             compaction_jobs: Vec::new(),
+            tier_migrations: Vec::new(),
             column_families: vec![ColumnFamilyDescriptor {
                 options: ColumnFamilyOptions {
                     memtable_kind: config.default_memtable_kind,

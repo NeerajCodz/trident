@@ -1,7 +1,9 @@
 use tempfile::tempdir;
-use trident::api::service::RequestContext;
+use trident::api::service::{PrimitiveFieldBytes, PrimitiveFieldId, RequestContext};
+use trident::identity::{Cid, Eid};
 use trident::sdk::{
-    GraphQlTridentClient, GrpcTridentClient, LocalTridentClient, RestTridentClient, SdkTransport,
+    GraphQlTridentClient, GrpcTridentClient, LocalPageTridentClient, LocalTridentClient,
+    RestTridentClient, SdkTransport,
 };
 use trident::store::StorageEngine;
 
@@ -26,6 +28,40 @@ fn local_sdk_executes_primitive_record_flow() {
     assert!(
         client
             .delete_record(RequestContext::new("sdk-local-delete"), put.record_id)
+            .unwrap()
+            .deleted
+    );
+}
+
+#[test]
+fn local_page_sdk_executes_cid_eid_rid_flow() {
+    let dir = tempdir().unwrap();
+    let client = LocalPageTridentClient::open(dir.path());
+
+    let put = client
+        .put_page_record(
+            RequestContext::new("sdk-page-put"),
+            Cid(1),
+            Eid(2),
+            vec![PrimitiveFieldBytes {
+                field: PrimitiveFieldId::Fixed(1),
+                bytes: b"page-sdk-value".to_vec(),
+            }],
+        )
+        .unwrap();
+    let get = client
+        .get_page_record(RequestContext::new("sdk-page-get"), Cid(1), Eid(2), put.rid)
+        .unwrap();
+
+    assert_eq!(get.body, Some(b"page-sdk-value".to_vec()));
+    assert!(
+        client
+            .delete_page_record(
+                RequestContext::new("sdk-page-delete"),
+                Cid(1),
+                Eid(2),
+                put.rid
+            )
             .unwrap()
             .deleted
     );

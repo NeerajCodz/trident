@@ -1,8 +1,12 @@
 use crate::errors::Result;
+use crate::identity::{Aid, Cid, Did, Eid, FieldId, Rid};
 use crate::kernel::{KernelSnapshot, StorageKernel};
+use crate::record::PageRecordStore;
 use crate::slog;
 use crate::store::{CompactionStats, IndexInsert, RecordId, StorageEngine, StorageEngineStats};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -97,9 +101,66 @@ pub struct CompactResponse {
     pub stats: CompactionStats,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum PrimitiveFieldId {
+    Fixed(u16),
+    Dynamic(u16),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PrimitiveFieldBytes {
+    pub field: PrimitiveFieldId,
+    pub bytes: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PutPageRecordRequest {
+    pub context: RequestContext,
+    pub cid: Cid,
+    pub eid: Eid,
+    pub fields: Vec<PrimitiveFieldBytes>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PutPageRecordResponse {
+    pub rid: Rid,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct GetPageRecordRequest {
+    pub context: RequestContext,
+    pub cid: Cid,
+    pub eid: Eid,
+    pub rid: Rid,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct GetPageRecordResponse {
+    pub body: Option<Vec<u8>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DeletePageRecordRequest {
+    pub context: RequestContext,
+    pub cid: Cid,
+    pub eid: Eid,
+    pub rid: Rid,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DeletePageRecordResponse {
+    pub deleted: bool,
+}
+
 #[derive(Clone)]
 pub struct PrimitiveStorageService {
     engine: Arc<Mutex<StorageEngine>>,
+}
+
+#[derive(Clone)]
+pub struct PagePrimitiveStorageService {
+    root: PathBuf,
+    stores: Arc<Mutex<BTreeMap<(Cid, Eid), PageRecordStore>>>,
 }
 
 impl PrimitiveStorageService {
@@ -218,6 +279,117 @@ impl PrimitiveStorageService {
             .map(|stats| CompactResponse { stats });
         emit_service_event(&request.context, "compact", 0, result.is_ok(), started);
         result
+    }
+}
+
+impl PagePrimitiveStorageService {
+    pub fn open(root: impl Into<PathBuf>) -> Self {
+        Self {
+            root: root.into(),
+            stores: Arc::new(Mutex::new(BTreeMap::new())),
+        }
+    }
+
+    pub fn put_page_record(&self, request: PutPageRecordRequest) -> Result<PutPageRecordResponse> {
+        let started = Instant::now();
+        let bytes = request
+            .fields
+            .iter()
+            .map(|field| field.bytes.len() as u64)
+            .sum();
+        let result = self.with_store(request.cid, request.eid, |store| {
+            let borrowed: Vec<(FieldId, &[u8])> = request
+                .fields
+                .iter()
+                .map(|field| (field.field.into(), field.bytes.as_slice()))
+                .collect();
+            store
+                .put(&borrowed)
+                .map(|rid| PutPageRecordResponse { rid })
+        });
+        emit_service_event(
+            &request.context,
+            "put_page_record",
+            bytes,
+            result.is_ok(),
+            started,
+        );
+        result
+    }
+
+    pub fn get_page_record(&self, request: GetPageRecordRequest) -> Result<GetPageRecordResponse> {
+        let started = Instant::now();
+        let result = self.with_store(request.cid, request.eid, |store| {
+            store
+                .get(request.rid)
+                .map(|body| GetPageRecordResponse { body: Some(body) })
+        });
+        let response = match result {
+            Ok(response) => Ok(response),
+            Err(crate::errors::TridentError::KeyNotFound) => {
+                Ok(GetPageRecordResponse { body: None })
+            }
+            Err(error) => Err(error),
+        };
+        emit_service_event(
+            &request.context,
+            "get_page_record",
+            response
+                .as_ref()
+                .ok()
+                .and_then(|response| response.body.as_ref())
+                .map(|body| body.len() as u64)
+                .unwrap_or(0),
+            response.is_ok(),
+            started,
+        );
+        response
+    }
+
+    pub fn delete_page_record(
+        &self,
+        request: DeletePageRecordRequest,
+    ) -> Result<DeletePageRecordResponse> {
+        let started = Instant::now();
+        let result = self.with_store(request.cid, request.eid, |store| {
+            store
+                .delete(request.rid)
+                .map(|()| DeletePageRecordResponse { deleted: true })
+        });
+        emit_service_event(
+            &request.context,
+            "delete_page_record",
+            0,
+            result.is_ok(),
+            started,
+        );
+        result
+    }
+
+    fn with_store<T>(
+        &self,
+        cid: Cid,
+        eid: Eid,
+        operation: impl FnOnce(&mut PageRecordStore) -> Result<T>,
+    ) -> Result<T> {
+        let mut stores = self.stores.lock().expect("page service mutex poisoned");
+        if let std::collections::btree_map::Entry::Vacant(entry) = stores.entry((cid, eid)) {
+            entry.insert(PageRecordStore::open(&self.root, cid, eid)?);
+        }
+        operation(
+            stores
+                .get_mut(&(cid, eid))
+                .expect("page store exists after insertion"),
+        )
+    }
+}
+
+impl From<PrimitiveFieldId> for FieldId {
+    fn from(value: PrimitiveFieldId) -> Self {
+        match value {
+            PrimitiveFieldId::Fixed(aid) => Self::Fixed(Aid(aid)),
+            PrimitiveFieldId::Dynamic(did) => Self::Dynamic(Did(did)),
+        }
     }
 }
 

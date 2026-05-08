@@ -1,11 +1,13 @@
 use crate::api::service::{
     DeleteRecordRequest, DeleteRecordResponse, GetRecordRequest, GetRecordResponse,
-    PrimitiveStorageService, PutRecordRequest, PutRecordResponse, RequestContext, StatsRequest,
-    StatsResponse,
+    PagePrimitiveStorageService, PrimitiveFieldBytes, PrimitiveStorageService, PutRecordRequest,
+    PutRecordResponse, RequestContext, StatsRequest, StatsResponse,
 };
 use crate::errors::Result;
+use crate::identity::{Cid, Eid, Rid};
 use crate::store::{IndexInsert, RecordId, StorageEngine};
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum SdkTransport {
@@ -26,6 +28,10 @@ pub struct RemoteStorageRequest {
 
 pub struct LocalTridentClient {
     service: PrimitiveStorageService,
+}
+
+pub struct LocalPageTridentClient {
+    service: PagePrimitiveStorageService,
 }
 
 impl LocalTridentClient {
@@ -68,6 +74,62 @@ impl LocalTridentClient {
 
     pub fn stats(&self, context: RequestContext) -> Result<StatsResponse> {
         self.service.stats(StatsRequest { context })
+    }
+}
+
+impl LocalPageTridentClient {
+    pub fn open(root: impl Into<PathBuf>) -> Self {
+        Self {
+            service: PagePrimitiveStorageService::open(root),
+        }
+    }
+
+    pub fn put_page_record(
+        &self,
+        context: RequestContext,
+        cid: Cid,
+        eid: Eid,
+        fields: Vec<PrimitiveFieldBytes>,
+    ) -> Result<crate::api::service::PutPageRecordResponse> {
+        self.service
+            .put_page_record(crate::api::service::PutPageRecordRequest {
+                context,
+                cid,
+                eid,
+                fields,
+            })
+    }
+
+    pub fn get_page_record(
+        &self,
+        context: RequestContext,
+        cid: Cid,
+        eid: Eid,
+        rid: Rid,
+    ) -> Result<crate::api::service::GetPageRecordResponse> {
+        self.service
+            .get_page_record(crate::api::service::GetPageRecordRequest {
+                context,
+                cid,
+                eid,
+                rid,
+            })
+    }
+
+    pub fn delete_page_record(
+        &self,
+        context: RequestContext,
+        cid: Cid,
+        eid: Eid,
+        rid: Rid,
+    ) -> Result<crate::api::service::DeletePageRecordResponse> {
+        self.service
+            .delete_page_record(crate::api::service::DeletePageRecordRequest {
+                context,
+                cid,
+                eid,
+                rid,
+            })
     }
 }
 

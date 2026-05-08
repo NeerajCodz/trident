@@ -14,12 +14,12 @@ pub enum CrashFailure {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RecoveryStage {
-    ReadManifest,
-    ReplayWal,
-    VerifyValueDirectory,
-    VerifyIndexes,
-    ResolveCompactions,
-    InstallCheckpoint,
+    WalReplay,
+    ManifestReconcile,
+    RecordDirectoryRepair,
+    IndexReplay,
+    CompactionCleanup,
+    TierMigrationCleanup,
     PublishRecoveredState,
 }
 
@@ -81,11 +81,12 @@ impl RecoveryPlan {
         Self {
             failure,
             stages: vec![
-                RecoveryStage::ReadManifest,
-                RecoveryStage::ReplayWal,
-                RecoveryStage::VerifyValueDirectory,
-                RecoveryStage::VerifyIndexes,
-                RecoveryStage::ResolveCompactions,
+                RecoveryStage::WalReplay,
+                RecoveryStage::ManifestReconcile,
+                RecoveryStage::RecordDirectoryRepair,
+                RecoveryStage::IndexReplay,
+                RecoveryStage::CompactionCleanup,
+                RecoveryStage::TierMigrationCleanup,
                 RecoveryStage::PublishRecoveredState,
             ],
             actions,
@@ -96,4 +97,30 @@ impl RecoveryPlan {
             ],
         }
     }
+
+    pub fn canonical_startup() -> Self {
+        Self::deterministic(CrashFailure::ProcessCrash)
+    }
+
+    pub fn invariant_step_names(&self) -> Vec<&'static str> {
+        self.stages
+            .iter()
+            .filter_map(|stage| match stage {
+                RecoveryStage::WalReplay => Some("wal_replay"),
+                RecoveryStage::ManifestReconcile => Some("manifest_reconcile"),
+                RecoveryStage::RecordDirectoryRepair => Some("record_directory_repair"),
+                RecoveryStage::IndexReplay => Some("index_replay"),
+                RecoveryStage::CompactionCleanup => Some("compaction_cleanup"),
+                RecoveryStage::TierMigrationCleanup => Some("tier_migration_cleanup"),
+                RecoveryStage::PublishRecoveredState => None,
+            })
+            .collect()
+    }
+
+    pub fn validate_deterministic_order(&self) -> Result<()> {
+        KernelInvariantValidator::validate_recovery_plan(&self.invariant_step_names())?;
+        Ok(())
+    }
 }
+use crate::errors::Result;
+use crate::kernel::KernelInvariantValidator;

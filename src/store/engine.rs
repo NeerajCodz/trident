@@ -11,6 +11,7 @@ use crate::kernel::{
     StorageKernel, StorageOperationMetrics,
 };
 use crate::metrics::{EngineMetrics, LatencyTracker};
+use crate::recovery::RecoveryPlan;
 use bytes::Bytes;
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -199,6 +200,7 @@ impl StorageEngine {
         let wal_path = root.join(Self::WAL_DIR).join(Self::WAL_FILE);
         let wal = StorageWal::open(&wal_path)?;
         let replay_entries = StorageWal::replay(&wal_path)?;
+        RecoveryPlan::canonical_startup().validate_deterministic_order()?;
         replay_primary_directory(&mut store, &replay_entries)?;
 
         let manifest_store = StorageManifestStore::new(root.join(Self::MANIFEST_FILE));
@@ -247,6 +249,7 @@ impl StorageEngine {
         let wal_path = root.join(Self::WAL_DIR).join(Self::WAL_FILE);
         let wal = StorageWal::open_with_options(&wal_path, wal_options)?;
         let replay_entries = StorageWal::replay(&wal_path)?;
+        RecoveryPlan::canonical_startup().validate_deterministic_order()?;
         replay_primary_directory(&mut store, &replay_entries)?;
 
         let manifest_store = StorageManifestStore::new(root.join(Self::MANIFEST_FILE));

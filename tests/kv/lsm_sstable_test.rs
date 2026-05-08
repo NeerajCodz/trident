@@ -77,3 +77,33 @@ fn sstable_rejects_corrupted_block_payload() {
     let reader = SstableReader::open(&path).unwrap();
     assert!(reader.get_at(b"k", u64::MAX).is_err());
 }
+
+#[test]
+fn sstable_blocks_track_restart_and_partition_metadata() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("000004.sst");
+    let mut writer = SstableWriter::create(
+        &path,
+        SstableOptions {
+            level: 0,
+            generation: 4,
+            block_target_bytes: 128,
+        },
+    );
+    for idx in 0..40 {
+        writer.add_put(format!("account:{idx:04}"), idx, RecordId(idx));
+    }
+    writer.finish().unwrap();
+
+    let reader = SstableReader::open(&path).unwrap();
+    let first = reader.block_index().first().unwrap();
+
+    assert!(first.prefix_compressed);
+    assert!(first.restart_interval > 0);
+    assert!(first.restart_count > 0);
+    assert!(!reader.zero_copy_block_bytes(0).unwrap().is_empty());
+    assert_eq!(
+        reader.get_at(b"account:0039", u64::MAX).unwrap(),
+        Some(RecordId(39))
+    );
+}

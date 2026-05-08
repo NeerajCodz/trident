@@ -1,14 +1,16 @@
 use crate::errors::{Result, TridentError};
-use crate::io::{crc32c, BinaryReader, BinaryWriter};
+use crate::io::{BinaryReader, BinaryWriter, crc32c};
 use crate::store::RecordId;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 const SSTABLE_MAGIC: u32 = 0x5453_5354;
-const SSTABLE_VERSION: u8 = 1;
+const SSTABLE_VERSION: u8 = 2;
 const FOOTER_MAGIC: u32 = 0x5453_4654;
 const HEADER_LEN: usize = 5;
 const TRAILER_LEN: usize = 8;
+const RESTART_INTERVAL: usize = 16;
+const PARTITION_TARGET_BLOCKS: usize = 4;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SstableOptions {
@@ -47,6 +49,10 @@ pub struct SstableBlockIndexEntry {
     pub len: u32,
     pub entry_count: u32,
     pub crc32: u32,
+    pub restart_interval: u32,
+    pub restart_count: u32,
+    pub partition_id: u32,
+    pub prefix_compressed: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -246,8 +252,36 @@ impl SstableReader {
         &self.metadata
     }
 
+    pub fn block_index(&self) -> &[SstableBlockIndexEntry] {
+        &self.index
+    }
+
     pub fn may_contain_key(&self, key: &[u8]) -> bool {
         self.filter.contains(&crc32c(key))
+    }
+
+    pub fn zero_copy_block_bytes(&self, block_index: usize) -> Result<&[u8]> {
+        let block = self
+            .index
+            .get(block_index)
+            .ok_or(TridentError::KeyNotFound)?;
+        let start = block.offset as usize;
+        let end = start.saturating_add(block.len as usize);
+        if start < HEADER_LEN || end > self.bytes.len() {
+            return corrupt(&self.path, "SSTable block outside file bounds");
+        }
+        let bytes = &self.bytes[start..end];
+        let actual = crc32c(bytes);
+        if actual != block.crc32 {
+            return corrupt(
+                &self.path,
+                &format!(
+                    "SSTable block checksum mismatch: expected {:#010x}, got {actual:#010x}",
+                    block.crc32
+                ),
+            );
+        }
+        Ok(bytes)
     }
 
     pub fn get_at(&self, key: &[u8], sequence: u64) -> Result<Option<RecordId>> {
@@ -299,22 +333,7 @@ impl SstableReader {
     }
 
     fn read_block(&self, block: &SstableBlockIndexEntry) -> Result<Vec<SstableEntry>> {
-        let start = block.offset as usize;
-        let end = start.saturating_add(block.len as usize);
-        if start < HEADER_LEN || end > self.bytes.len() {
-            return corrupt(&self.path, "SSTable block outside file bounds");
-        }
-        let bytes = &self.bytes[start..end];
-        let actual = crc32c(bytes);
-        if actual != block.crc32 {
-            return corrupt(
-                &self.path,
-                &format!(
-                    "SSTable block checksum mismatch: expected {:#010x}, got {:#010x}",
-                    block.crc32, actual
-                ),
-            );
-        }
+        let bytes = self.zero_copy_block_bytes(block_position(&self.index, block)?)?;
         decode_block(bytes, &self.path)
     }
 }
@@ -327,6 +346,7 @@ fn write_block(
     let encoded = encode_block(entries);
     let offset = out.len() as u64;
     out.extend_from_slice(&encoded);
+    let block_number = index.len();
     index.push(SstableBlockIndexEntry {
         first_key: entries
             .first()
@@ -340,14 +360,30 @@ fn write_block(
         len: encoded.len() as u32,
         entry_count: entries.len() as u32,
         crc32: crc32c(&encoded),
+        restart_interval: RESTART_INTERVAL as u32,
+        restart_count: entries.len().div_ceil(RESTART_INTERVAL) as u32,
+        partition_id: (block_number / PARTITION_TARGET_BLOCKS) as u32,
+        prefix_compressed: true,
     });
 }
 
 fn encode_block(entries: &[SstableEntry]) -> Vec<u8> {
     let mut writer = BinaryWriter::new();
     writer.write_u32(entries.len() as u32);
-    for entry in entries {
-        writer.write_len_bytes(&entry.key);
+    writer.write_u32(RESTART_INTERVAL as u32);
+    let mut previous_key = Vec::new();
+    let mut restart_offsets = Vec::new();
+    for (idx, entry) in entries.iter().enumerate() {
+        if idx % RESTART_INTERVAL == 0 {
+            restart_offsets.push(writer.len() as u32);
+        }
+        let prefix_len = if idx % RESTART_INTERVAL == 0 {
+            0
+        } else {
+            common_prefix_len(&previous_key, &entry.key)
+        };
+        writer.write_u32(prefix_len as u32);
+        writer.write_len_bytes(&entry.key[prefix_len..]);
         writer.write_u64(entry.sequence);
         match entry.kind {
             EntryKind::Put => {
@@ -359,6 +395,11 @@ fn encode_block(entries: &[SstableEntry]) -> Vec<u8> {
                 writer.write_u64(0);
             }
         }
+        previous_key = entry.key.clone();
+    }
+    writer.write_u32(restart_offsets.len() as u32);
+    for offset in restart_offsets {
+        writer.write_u32(offset);
     }
     writer.into_inner()
 }
@@ -366,9 +407,23 @@ fn encode_block(entries: &[SstableEntry]) -> Vec<u8> {
 fn decode_block(bytes: &[u8], source: &Path) -> Result<Vec<SstableEntry>> {
     let mut reader = BinaryReader::new(bytes, source.to_path_buf());
     let count = reader.read_u32()? as usize;
+    let restart_interval = reader.read_u32()? as usize;
+    if restart_interval == 0 {
+        return corrupt(source, "SSTable block restart interval cannot be zero");
+    }
     let mut entries = Vec::with_capacity(count);
-    for _ in 0..count {
-        let key = reader.read_len_bytes()?;
+    let mut previous_key = Vec::new();
+    for idx in 0..count {
+        let prefix_len = reader.read_u32()? as usize;
+        if idx % restart_interval == 0 && prefix_len != 0 {
+            return corrupt(source, "SSTable restart entry used a non-zero prefix");
+        }
+        if prefix_len > previous_key.len() {
+            return corrupt(source, "SSTable key prefix exceeds previous key length");
+        }
+        let suffix = reader.read_len_bytes()?;
+        let mut key = previous_key[..prefix_len].to_vec();
+        key.extend_from_slice(&suffix);
         let sequence = reader.read_u64()?;
         let kind = match reader.read_u8()? {
             0 => EntryKind::Tombstone,
@@ -378,12 +433,17 @@ fn decode_block(bytes: &[u8], source: &Path) -> Result<Vec<SstableEntry>> {
             }
         };
         let rid = RecordId(reader.read_u64()?);
+        previous_key = key.clone();
         entries.push(SstableEntry {
             key,
             sequence,
             kind,
             rid: (kind == EntryKind::Put).then_some(rid),
         });
+    }
+    let restart_count = reader.read_u32()? as usize;
+    for _ in 0..restart_count {
+        let _ = reader.read_u32()?;
     }
     Ok(entries)
 }
@@ -398,6 +458,10 @@ fn encode_index(index: &[SstableBlockIndexEntry]) -> Vec<u8> {
         writer.write_u32(block.len);
         writer.write_u32(block.entry_count);
         writer.write_u32(block.crc32);
+        writer.write_u32(block.restart_interval);
+        writer.write_u32(block.restart_count);
+        writer.write_u32(block.partition_id);
+        writer.write_u8(u8::from(block.prefix_compressed));
     }
     writer.into_inner()
 }
@@ -414,9 +478,32 @@ fn decode_index(bytes: &[u8], source: &Path) -> Result<Vec<SstableBlockIndexEntr
             len: reader.read_u32()?,
             entry_count: reader.read_u32()?,
             crc32: reader.read_u32()?,
+            restart_interval: reader.read_u32()?,
+            restart_count: reader.read_u32()?,
+            partition_id: reader.read_u32()?,
+            prefix_compressed: reader.read_u8()? != 0,
         });
     }
     Ok(out)
+}
+
+fn block_position(
+    index: &[SstableBlockIndexEntry],
+    target: &SstableBlockIndexEntry,
+) -> Result<usize> {
+    index
+        .iter()
+        .position(|entry| {
+            entry.offset == target.offset && entry.len == target.len && entry.crc32 == target.crc32
+        })
+        .ok_or(TridentError::KeyNotFound)
+}
+
+fn common_prefix_len(left: &[u8], right: &[u8]) -> usize {
+    left.iter()
+        .zip(right)
+        .take_while(|(left, right)| left == right)
+        .count()
 }
 
 fn encode_filter<'a>(keys: impl IntoIterator<Item = &'a [u8]>) -> Vec<u8> {

@@ -5,6 +5,7 @@ use crate::errors::{Result, TridentError};
 use crate::identity::{Aid, Cid, Did, Eid, Fid, FieldId, Pid, Rid, Sid, SlotAddress, Vid};
 use crate::io::{BinaryReader, BinaryWriter, crc32c};
 use crate::layout::TridentLayout;
+use crate::manifest::PageManifestStore;
 use crate::page::{RecordPage, SlotDirectoryEntry};
 use crate::segments::{BlobLocation, BlobStore};
 use crate::wal::{PageWal, PageWalMutation, PageWalRecord};
@@ -477,6 +478,15 @@ impl PageRecordStore {
             std::fs::remove_file(&path)?;
         }
         std::fs::rename(&tmp_path, path)?;
+        self.manifest_store().track_bytes(
+            &self
+                .layout
+                .page_path(self.cid, self.eid, self.fid, pid)
+                .path,
+            "record-page",
+            1,
+            &page.to_bytes(),
+        )?;
         Ok(())
     }
 
@@ -493,7 +503,15 @@ impl PageRecordStore {
             directory.write_u32(slot.len);
             directory.write_u8(u8::from(slot.tombstone));
         }
-        std::fs::write(root.join("slot.directory"), directory.into_inner())?;
+        let slot_directory = directory.into_inner();
+        let slot_directory_path = root.join("slot.directory");
+        std::fs::write(&slot_directory_path, &slot_directory)?;
+        self.manifest_store().track_bytes(
+            &slot_directory_path,
+            "slot-directory",
+            1,
+            &slot_directory,
+        )?;
         std::fs::write(root.join("free.slots"), [])?;
         std::fs::write(root.join("null.bitmap"), [])?;
         std::fs::write(root.join("varlen.map"), [])?;
@@ -504,7 +522,13 @@ impl PageRecordStore {
     fn flush_directory(&self) -> Result<()> {
         let path = self.layout.critical_map_path(self.cid, "rid_to_slot").path;
         self.directory
-            .save_binary(&path, self.next_rid, self.next_sid, self.current_pid)
+            .save_binary(&path, self.next_rid, self.next_sid, self.current_pid)?;
+        self.manifest_store().track_bytes(
+            &path,
+            "rid-directory",
+            RID_DIRECTORY_VERSION as u16,
+            &std::fs::read(&path)?,
+        )
     }
 
     fn encode_typed_record(&self, fields: &[(FieldId, TridentValue)]) -> Result<Vec<u8>> {
@@ -576,6 +600,10 @@ impl PageRecordStore {
             family,
             1,
         )
+    }
+
+    fn manifest_store(&self) -> PageManifestStore {
+        PageManifestStore::open(self.layout.page_manifest_path().path)
     }
 }
 

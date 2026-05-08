@@ -79,6 +79,13 @@ impl TridentLayout {
         self.root.join("data")
     }
 
+    pub fn page_manifest_path(&self) -> LayoutPath {
+        self.layout_path(
+            DurableLayoutKind::Catalog,
+            self.catalog_root().join("page-layout.manifest"),
+        )
+    }
+
     pub fn collection_root(&self, cid: Cid) -> PathBuf {
         self.data_root().join(cid.to_hex())
     }

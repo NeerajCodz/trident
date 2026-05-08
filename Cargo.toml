@@ -218,5 +218,9 @@ name = "api_grpc_contracts"
 path = "tests/api/grpc_contract_test.rs"
 
 [[test]]
+name = "api_graphql_contracts"
+path = "tests/api/graphql_contract_test.rs"
+
+[[test]]
 name = "api_sdk_contracts"
 path = "tests/api/sdk_contract_test.rs"

@@ -4,14 +4,31 @@ package trident.storage.v1;
 
 service StorageAdmin {
   rpc Health(HealthRequest) returns (HealthResponse);
+  rpc Stats(StatsRequest) returns (StatsResponse);
+  rpc Snapshot(SnapshotRequest) returns (SnapshotResponse);
   rpc Flush(FlushRequest) returns (FlushResponse);
   rpc Compact(CompactRequest) returns (CompactResponse);
+  rpc Recover(RecoverRequest) returns (RecoverResponse);
+  rpc PromoteTier(TierRequest) returns (TierResponse);
+  rpc ReplicationStatus(ReplicationStatusRequest) returns (ReplicationStatusResponse);
 }
 
-service Kv {
-  rpc Get(KvGetRequest) returns (KvGetResponse);
-  rpc Put(KvPutRequest) returns (KvPutResponse);
-  rpc Delete(KvDeleteRequest) returns (KvDeleteResponse);
+service RecordStore {
+  rpc GetRecord(GetRecordRequest) returns (GetRecordResponse);
+  rpc PutRecord(PutRecordRequest) returns (PutRecordResponse);
+  rpc DeleteRecord(DeleteRecordRequest) returns (DeleteRecordResponse);
+}
+
+service IndexStore {
+  rpc RegisterIndex(RegisterIndexRequest) returns (RegisterIndexResponse);
+  rpc PutIndex(PutIndexRequest) returns (PutIndexResponse);
+  rpc LookupIndex(LookupIndexRequest) returns (LookupIndexResponse);
+  rpc DeleteIndex(DeleteIndexRequest) returns (DeleteIndexResponse);
+}
+
+service CursorStore {
+  rpc ScanRange(ScanRangeRequest) returns (ScanRangeResponse);
+  rpc ScanPrefix(ScanPrefixRequest) returns (ScanPrefixResponse);
 }
 
 message RequestContext {
@@ -22,13 +39,39 @@ message RequestContext {
 
 message HealthRequest {}
 message HealthResponse { string status = 1; }
-message FlushRequest {}
+message StatsRequest { RequestContext context = 1; }
+message StatsResponse { uint64 live_records = 1; uint64 live_bytes = 2; uint64 wal_bytes_written = 3; }
+message SnapshotRequest { RequestContext context = 1; }
+message SnapshotResponse { uint64 sequence = 1; }
+message FlushRequest { RequestContext context = 1; }
 message FlushResponse { bool ok = 1; }
-message CompactRequest { string target = 1; }
-message CompactResponse { bool ok = 1; }
-message KvGetRequest { RequestContext context = 1; bytes key = 2; }
-message KvGetResponse { bytes value = 1; bool found = 2; }
-message KvPutRequest { RequestContext context = 1; bytes key = 2; bytes value = 3; }
-message KvPutResponse { uint64 record_id = 1; }
-message KvDeleteRequest { RequestContext context = 1; bytes key = 2; }
-message KvDeleteResponse { bool ok = 1; }
+message CompactRequest { RequestContext context = 1; string target = 2; }
+message CompactResponse { bool ok = 1; uint64 records_retained = 2; uint64 records_dropped = 3; uint64 bytes_rewritten = 4; }
+message RecoverRequest { RequestContext context = 1; string failure = 2; }
+message RecoverResponse { bool ok = 1; repeated string stages = 2; }
+message TierRequest { RequestContext context = 1; uint64 record_id = 2; string target_tier = 3; }
+message TierResponse { bool ok = 1; }
+message ReplicationStatusRequest { RequestContext context = 1; }
+message ReplicationStatusResponse { uint64 log_position = 1; uint64 checkpoint_sequence = 2; }
+
+message IndexMutation { string index_type = 1; bytes key = 2; }
+message GetRecordRequest { RequestContext context = 1; uint64 record_id = 2; }
+message GetRecordResponse { bytes value = 1; bool found = 2; }
+message PutRecordRequest { RequestContext context = 1; bytes value = 2; repeated IndexMutation indexes = 3; }
+message PutRecordResponse { uint64 record_id = 1; }
+message DeleteRecordRequest { RequestContext context = 1; uint64 record_id = 2; }
+message DeleteRecordResponse { bool ok = 1; }
+
+message RegisterIndexRequest { RequestContext context = 1; string index_type = 2; string namespace = 3; string engine_kind = 4; }
+message RegisterIndexResponse { bool ok = 1; }
+message PutIndexRequest { RequestContext context = 1; string index_type = 2; bytes key = 3; uint64 record_id = 4; }
+message PutIndexResponse { bool ok = 1; }
+message LookupIndexRequest { RequestContext context = 1; string index_type = 2; bytes key = 3; }
+message LookupIndexResponse { uint64 record_id = 1; bool found = 2; }
+message DeleteIndexRequest { RequestContext context = 1; string index_type = 2; bytes key = 3; }
+message DeleteIndexResponse { bool ok = 1; }
+
+message ScanRangeRequest { RequestContext context = 1; bytes start = 2; bytes end = 3; uint32 limit = 4; }
+message ScanRangeResponse { repeated uint64 record_ids = 1; }
+message ScanPrefixRequest { RequestContext context = 1; bytes prefix = 2; uint32 limit = 3; }
+message ScanPrefixResponse { repeated uint64 record_ids = 1; }

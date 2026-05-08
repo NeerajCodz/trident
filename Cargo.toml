@@ -126,6 +126,10 @@ name = "datatype_storage"
 path = "tests/datatype/datatype_storage_test.rs"
 
 [[test]]
+name = "segments_external"
+path = "tests/segments/external_segment_test.rs"
+
+[[test]]
 name = "kv_kernel_invariants"
 path = "tests/kv/kernel_invariants_test.rs"
 

@@ -53,12 +53,64 @@ pub struct DynamicAttributeCatalogEntry {
     pub inferred_type_code: Option<u8>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct IndexCatalogEntry {
+    pub eid: Eid,
+    pub index_id: u32,
+    pub name: String,
+    pub kind: String,
+    pub pointer_target: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct VectorModelCatalogEntry {
+    pub model_id: u32,
+    pub name: String,
+    pub dimensions: u32,
+    pub metric: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct FullTextCatalogEntry {
+    pub eid: Eid,
+    pub analyzer: String,
+    pub language: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct GraphCatalogEntry {
+    pub eid: Eid,
+    pub edge_label: String,
+    pub directed: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ShardCatalogEntry {
+    pub shard_id: u32,
+    pub cid: Cid,
+    pub range_start: String,
+    pub range_end: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct UserCatalogEntry {
+    pub user_id: u32,
+    pub name: String,
+    pub role: String,
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct CatalogSnapshot {
     pub collections: Vec<CollectionCatalogEntry>,
     pub entities: Vec<EntityCatalogEntry>,
     pub fixed_attributes: Vec<FixedAttributeCatalogEntry>,
     pub dynamic_attributes: Vec<DynamicAttributeCatalogEntry>,
+    pub indexes: Vec<IndexCatalogEntry>,
+    pub vector_models: Vec<VectorModelCatalogEntry>,
+    pub fulltext: Vec<FullTextCatalogEntry>,
+    pub graph: Vec<GraphCatalogEntry>,
+    pub shards: Vec<ShardCatalogEntry>,
+    pub users: Vec<UserCatalogEntry>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -93,6 +145,30 @@ impl CatalogStore {
         write_catalog(
             &self.layout.catalog_root().join("dynamic_attrs.cat"),
             &encode_dynamic_attrs(&snapshot.dynamic_attributes),
+        )?;
+        write_catalog(
+            &self.layout.catalog_root().join("indexes.cat"),
+            &encode_indexes(&snapshot.indexes),
+        )?;
+        write_catalog(
+            &self.layout.catalog_root().join("vector_models.cat"),
+            &encode_vector_models(&snapshot.vector_models),
+        )?;
+        write_catalog(
+            &self.layout.catalog_root().join("fulltext.cat"),
+            &encode_fulltext(&snapshot.fulltext),
+        )?;
+        write_catalog(
+            &self.layout.catalog_root().join("graph.cat"),
+            &encode_graph(&snapshot.graph),
+        )?;
+        write_catalog(
+            &self.layout.catalog_root().join("shards.cat"),
+            &encode_shards(&snapshot.shards),
+        )?;
+        write_catalog(
+            &self.layout.catalog_root().join("users.cat"),
+            &encode_users(&snapshot.users),
         )
     }
 
@@ -114,6 +190,24 @@ impl CatalogStore {
                 &self.layout.catalog_root().join("dynamic_attrs.cat"),
                 decode_dynamic_attrs,
             )?,
+            indexes: read_if_exists(
+                &self.layout.catalog_root().join("indexes.cat"),
+                decode_indexes,
+            )?,
+            vector_models: read_if_exists(
+                &self.layout.catalog_root().join("vector_models.cat"),
+                decode_vector_models,
+            )?,
+            fulltext: read_if_exists(
+                &self.layout.catalog_root().join("fulltext.cat"),
+                decode_fulltext,
+            )?,
+            graph: read_if_exists(&self.layout.catalog_root().join("graph.cat"), decode_graph)?,
+            shards: read_if_exists(
+                &self.layout.catalog_root().join("shards.cat"),
+                decode_shards,
+            )?,
+            users: read_if_exists(&self.layout.catalog_root().join("users.cat"), decode_users)?,
         })
     }
 }
@@ -292,6 +386,164 @@ fn decode_dynamic_attrs(bytes: &[u8], path: &Path) -> Result<Vec<DynamicAttribut
             did,
             name,
             inferred_type_code: has_type.then_some(type_code),
+        });
+    }
+    Ok(out)
+}
+
+fn encode_indexes(entries: &[IndexCatalogEntry]) -> Vec<u8> {
+    let mut writer = BinaryWriter::new();
+    writer.write_u32(entries.len() as u32);
+    for entry in entries {
+        writer.write_u32(entry.eid.0);
+        writer.write_u32(entry.index_id);
+        writer.write_len_bytes(entry.name.as_bytes());
+        writer.write_len_bytes(entry.kind.as_bytes());
+        writer.write_len_bytes(entry.pointer_target.as_bytes());
+    }
+    writer.into_inner()
+}
+
+fn decode_indexes(bytes: &[u8], path: &Path) -> Result<Vec<IndexCatalogEntry>> {
+    let mut reader = BinaryReader::new(bytes, path.to_path_buf());
+    let count = reader.read_u32()? as usize;
+    let mut out = Vec::with_capacity(count);
+    for _ in 0..count {
+        out.push(IndexCatalogEntry {
+            eid: Eid(reader.read_u32()?),
+            index_id: reader.read_u32()?,
+            name: read_string(&mut reader)?,
+            kind: read_string(&mut reader)?,
+            pointer_target: read_string(&mut reader)?,
+        });
+    }
+    Ok(out)
+}
+
+fn encode_vector_models(entries: &[VectorModelCatalogEntry]) -> Vec<u8> {
+    let mut writer = BinaryWriter::new();
+    writer.write_u32(entries.len() as u32);
+    for entry in entries {
+        writer.write_u32(entry.model_id);
+        writer.write_len_bytes(entry.name.as_bytes());
+        writer.write_u32(entry.dimensions);
+        writer.write_len_bytes(entry.metric.as_bytes());
+    }
+    writer.into_inner()
+}
+
+fn decode_vector_models(bytes: &[u8], path: &Path) -> Result<Vec<VectorModelCatalogEntry>> {
+    let mut reader = BinaryReader::new(bytes, path.to_path_buf());
+    let count = reader.read_u32()? as usize;
+    let mut out = Vec::with_capacity(count);
+    for _ in 0..count {
+        out.push(VectorModelCatalogEntry {
+            model_id: reader.read_u32()?,
+            name: read_string(&mut reader)?,
+            dimensions: reader.read_u32()?,
+            metric: read_string(&mut reader)?,
+        });
+    }
+    Ok(out)
+}
+
+fn encode_fulltext(entries: &[FullTextCatalogEntry]) -> Vec<u8> {
+    let mut writer = BinaryWriter::new();
+    writer.write_u32(entries.len() as u32);
+    for entry in entries {
+        writer.write_u32(entry.eid.0);
+        writer.write_len_bytes(entry.analyzer.as_bytes());
+        writer.write_len_bytes(entry.language.as_bytes());
+    }
+    writer.into_inner()
+}
+
+fn decode_fulltext(bytes: &[u8], path: &Path) -> Result<Vec<FullTextCatalogEntry>> {
+    let mut reader = BinaryReader::new(bytes, path.to_path_buf());
+    let count = reader.read_u32()? as usize;
+    let mut out = Vec::with_capacity(count);
+    for _ in 0..count {
+        out.push(FullTextCatalogEntry {
+            eid: Eid(reader.read_u32()?),
+            analyzer: read_string(&mut reader)?,
+            language: read_string(&mut reader)?,
+        });
+    }
+    Ok(out)
+}
+
+fn encode_graph(entries: &[GraphCatalogEntry]) -> Vec<u8> {
+    let mut writer = BinaryWriter::new();
+    writer.write_u32(entries.len() as u32);
+    for entry in entries {
+        writer.write_u32(entry.eid.0);
+        writer.write_len_bytes(entry.edge_label.as_bytes());
+        writer.write_u8(u8::from(entry.directed));
+    }
+    writer.into_inner()
+}
+
+fn decode_graph(bytes: &[u8], path: &Path) -> Result<Vec<GraphCatalogEntry>> {
+    let mut reader = BinaryReader::new(bytes, path.to_path_buf());
+    let count = reader.read_u32()? as usize;
+    let mut out = Vec::with_capacity(count);
+    for _ in 0..count {
+        out.push(GraphCatalogEntry {
+            eid: Eid(reader.read_u32()?),
+            edge_label: read_string(&mut reader)?,
+            directed: reader.read_u8()? != 0,
+        });
+    }
+    Ok(out)
+}
+
+fn encode_shards(entries: &[ShardCatalogEntry]) -> Vec<u8> {
+    let mut writer = BinaryWriter::new();
+    writer.write_u32(entries.len() as u32);
+    for entry in entries {
+        writer.write_u32(entry.shard_id);
+        writer.write_u32(entry.cid.0);
+        writer.write_len_bytes(entry.range_start.as_bytes());
+        writer.write_len_bytes(entry.range_end.as_bytes());
+    }
+    writer.into_inner()
+}
+
+fn decode_shards(bytes: &[u8], path: &Path) -> Result<Vec<ShardCatalogEntry>> {
+    let mut reader = BinaryReader::new(bytes, path.to_path_buf());
+    let count = reader.read_u32()? as usize;
+    let mut out = Vec::with_capacity(count);
+    for _ in 0..count {
+        out.push(ShardCatalogEntry {
+            shard_id: reader.read_u32()?,
+            cid: Cid(reader.read_u32()?),
+            range_start: read_string(&mut reader)?,
+            range_end: read_string(&mut reader)?,
+        });
+    }
+    Ok(out)
+}
+
+fn encode_users(entries: &[UserCatalogEntry]) -> Vec<u8> {
+    let mut writer = BinaryWriter::new();
+    writer.write_u32(entries.len() as u32);
+    for entry in entries {
+        writer.write_u32(entry.user_id);
+        writer.write_len_bytes(entry.name.as_bytes());
+        writer.write_len_bytes(entry.role.as_bytes());
+    }
+    writer.into_inner()
+}
+
+fn decode_users(bytes: &[u8], path: &Path) -> Result<Vec<UserCatalogEntry>> {
+    let mut reader = BinaryReader::new(bytes, path.to_path_buf());
+    let count = reader.read_u32()? as usize;
+    let mut out = Vec::with_capacity(count);
+    for _ in 0..count {
+        out.push(UserCatalogEntry {
+            user_id: reader.read_u32()?,
+            name: read_string(&mut reader)?,
+            role: read_string(&mut reader)?,
         });
     }
     Ok(out)

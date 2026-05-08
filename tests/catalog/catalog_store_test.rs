@@ -1,7 +1,9 @@
 use tempfile::tempdir;
 use trident::catalog::{
     CatalogSnapshot, CatalogStore, CollectionCatalogEntry, DynamicAttributeCatalogEntry,
-    EntityCatalogEntry, EntityStorageModel, FixedAttributeCatalogEntry,
+    EntityCatalogEntry, EntityStorageModel, FixedAttributeCatalogEntry, FullTextCatalogEntry,
+    GraphCatalogEntry, IndexCatalogEntry, ShardCatalogEntry, UserCatalogEntry,
+    VectorModelCatalogEntry,
 };
 use trident::config::Compression;
 use trident::identity::{Aid, Cid, Did, Eid};
@@ -55,6 +57,40 @@ fn catalog_store_persists_collection_entity_and_attribute_catalogs() {
             name: "teacher".into(),
             inferred_type_code: Some(0x30),
         }],
+        indexes: vec![IndexCatalogEntry {
+            eid: Eid(2),
+            index_id: 1,
+            name: "students_by_marks".into(),
+            kind: "btree".into(),
+            pointer_target: "RID".into(),
+        }],
+        vector_models: vec![VectorModelCatalogEntry {
+            model_id: 1,
+            name: "student_embedding".into(),
+            dimensions: 384,
+            metric: "cosine".into(),
+        }],
+        fulltext: vec![FullTextCatalogEntry {
+            eid: Eid(2),
+            analyzer: "standard".into(),
+            language: "en".into(),
+        }],
+        graph: vec![GraphCatalogEntry {
+            eid: Eid(2),
+            edge_label: "knows".into(),
+            directed: true,
+        }],
+        shards: vec![ShardCatalogEntry {
+            shard_id: 1,
+            cid: Cid(1),
+            range_start: "0000000000000001".into(),
+            range_end: "00000000ffffffff".into(),
+        }],
+        users: vec![UserCatalogEntry {
+            user_id: 1,
+            name: "root".into(),
+            role: "owner".into(),
+        }],
     };
 
     store.save(&snapshot).unwrap();
@@ -69,6 +105,66 @@ fn catalog_store_persists_collection_entity_and_attribute_catalogs() {
             .exists()
     );
     assert!(store.layout().catalog_root().join("entities.cat").exists());
+    assert!(
+        store
+            .layout()
+            .catalog_root()
+            .join("indexes.cat")
+            .metadata()
+            .unwrap()
+            .len()
+            > 0
+    );
+    assert!(
+        store
+            .layout()
+            .catalog_root()
+            .join("vector_models.cat")
+            .metadata()
+            .unwrap()
+            .len()
+            > 0
+    );
+    assert!(
+        store
+            .layout()
+            .catalog_root()
+            .join("fulltext.cat")
+            .metadata()
+            .unwrap()
+            .len()
+            > 0
+    );
+    assert!(
+        store
+            .layout()
+            .catalog_root()
+            .join("graph.cat")
+            .metadata()
+            .unwrap()
+            .len()
+            > 0
+    );
+    assert!(
+        store
+            .layout()
+            .catalog_root()
+            .join("shards.cat")
+            .metadata()
+            .unwrap()
+            .len()
+            > 0
+    );
+    assert!(
+        store
+            .layout()
+            .catalog_root()
+            .join("users.cat")
+            .metadata()
+            .unwrap()
+            .len()
+            > 0
+    );
 }
 
 #[test]

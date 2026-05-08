@@ -16,6 +16,7 @@ pub mod cache;
 pub mod catalog;
 pub mod cli;
 pub mod config;
+pub mod datatype;
 pub mod disk;
 pub mod engine;
 pub mod errors;

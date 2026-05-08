@@ -13,15 +13,18 @@ pub mod api;
 pub mod bench;
 pub mod bench_advanced;
 pub mod cache;
+pub mod catalog;
 pub mod cli;
 pub mod config;
 pub mod disk;
 pub mod engine;
 pub mod errors;
 pub mod formats;
+pub mod identity;
 pub mod index;
 pub mod io;
 pub mod kernel;
+pub mod layout;
 pub mod maintenance;
 pub mod manifest;
 pub mod memory;
@@ -44,6 +47,7 @@ pub use config::{CompactionStrategy, Compression, TridentConfig, WalSyncPolicy};
 pub use engine::TridentEngine;
 pub use engine::r#async::AsyncTridentEngine;
 pub use errors::{Result, TridentError};
+pub use identity::{Aid, Cid, Did, Eid, Fid, FieldId, Pid, RelativeVid, Rid, Sid, Vid, VidContext};
 pub use index::IndexPlugin;
 pub use index::{
     AdjacencyIndex, BTreeIndex, BitmapIndex, BoundingBox, HnswIndex, InvertedIndex, IvfFlatIndex,

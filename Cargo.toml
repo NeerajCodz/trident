@@ -114,6 +114,10 @@ name = "kv_record_directory"
 path = "tests/kv/record_directory_test.rs"
 
 [[test]]
+name = "identity_layout"
+path = "tests/identity/identity_layout_test.rs"
+
+[[test]]
 name = "kv_kernel_invariants"
 path = "tests/kv/kernel_invariants_test.rs"
 

@@ -1,6 +1,6 @@
 use trident::identity::{Aid, Cid, Eid, Fid, FieldId, Pid, Rid, Sid, SlotAddress};
 use trident::page::RecordPage;
-use trident::record::{RecordSlot, RidDirectory};
+use trident::record::{PageRecordStore, RecordSlot, RidDirectory};
 
 #[test]
 fn record_page_inserts_reads_deletes_and_defragments_slots() {
@@ -68,4 +68,67 @@ fn record_slot_tracks_field_offsets_and_rid_directory_resolves_vids() {
     let mut page = RecordPage::new(1);
     slot.install_into_page(&mut page).unwrap();
     assert_eq!(page.get(Sid(0x001a)).unwrap(), Some(slot.body.as_slice()));
+}
+
+#[test]
+fn page_record_store_persists_rid_to_page_slot_mapping() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = PageRecordStore::open(dir.path(), Cid(1), Eid(2)).unwrap();
+
+    let rid = store
+        .put(&[(FieldId::Fixed(Aid(1)), b"Neeraj".as_slice())])
+        .unwrap();
+
+    assert_eq!(rid, Rid(1));
+    assert_eq!(store.get(rid).unwrap(), b"Neeraj");
+    assert!(
+        store
+            .layout()
+            .page_path(Cid(1), Eid(2), Fid(1), Pid(1))
+            .path
+            .exists()
+    );
+    assert!(
+        store
+            .layout()
+            .slot_directory_path(Cid(1), Eid(2), Fid(1), Pid(1))
+            .path
+            .exists()
+    );
+
+    let reopened = PageRecordStore::open(dir.path(), Cid(1), Eid(2)).unwrap();
+    assert_eq!(reopened.get(rid).unwrap(), b"Neeraj");
+    assert_eq!(
+        reopened
+            .directory()
+            .vid_for(rid, FieldId::Fixed(Aid(1)))
+            .unwrap()
+            .to_global_hex(),
+        "0002-0001-0001-0001-0001"
+    );
+}
+
+#[test]
+fn page_record_store_deletes_slot_without_reusing_rid() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = PageRecordStore::open(dir.path(), Cid(1), Eid(2)).unwrap();
+    let rid = store
+        .put(&[(FieldId::Fixed(Aid(1)), b"gone".as_slice())])
+        .unwrap();
+
+    store.delete(rid).unwrap();
+
+    assert!(store.get(rid).is_err());
+    let page = RecordPage::from_bytes(
+        &std::fs::read(
+            store
+                .layout()
+                .page_path(Cid(1), Eid(2), Fid(1), Pid(1))
+                .path,
+        )
+        .unwrap(),
+        "page",
+    )
+    .unwrap();
+    assert!(page.slots()[0].tombstone);
 }

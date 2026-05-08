@@ -118,6 +118,10 @@ name = "identity_layout"
 path = "tests/identity/identity_layout_test.rs"
 
 [[test]]
+name = "catalog_store"
+path = "tests/catalog/catalog_store_test.rs"
+
+[[test]]
 name = "record_page"
 path = "tests/record/page_record_test.rs"
 

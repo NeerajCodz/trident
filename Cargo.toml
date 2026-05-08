@@ -198,6 +198,10 @@ name = "durability_recovery_model"
 path = "tests/durability/recovery_model_test.rs"
 
 [[test]]
+name = "durability_page_wal"
+path = "tests/durability/page_wal_test.rs"
+
+[[test]]
 name = "durability_mvcc_model"
 path = "tests/durability/mvcc_model_test.rs"
 

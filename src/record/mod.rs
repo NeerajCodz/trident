@@ -3,6 +3,7 @@ use crate::identity::{Aid, Cid, Did, Eid, Fid, FieldId, Pid, Rid, Sid, SlotAddre
 use crate::io::{BinaryReader, BinaryWriter, crc32c};
 use crate::layout::TridentLayout;
 use crate::page::{RecordPage, SlotDirectoryEntry};
+use crate::wal::{PageWal, PageWalMutation, PageWalRecord};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs::OpenOptions;
@@ -242,14 +243,65 @@ impl PageRecordStore {
 
     pub fn put(&mut self, fields: &[(FieldId, &[u8])]) -> Result<Rid> {
         let rid = Rid(self.next_rid);
+        self.apply_put(rid, fields)?;
+        Ok(rid)
+    }
+
+    pub fn put_durable(&mut self, wal: &mut PageWal, fields: &[(FieldId, &[u8])]) -> Result<Rid> {
+        let rid = Rid(self.next_rid);
+        wal.append_put(self.cid, self.eid, rid, fields)?;
+        self.apply_put(rid, fields)?;
+        Ok(rid)
+    }
+
+    pub fn delete_durable(&mut self, wal: &mut PageWal, rid: Rid) -> Result<()> {
+        wal.append_delete(self.cid, self.eid, rid)?;
+        self.delete(rid)
+    }
+
+    pub fn replay_page_wal(&mut self, records: &[PageWalRecord]) -> Result<()> {
+        for record in records {
+            self.apply_page_wal_record(record)?;
+        }
+        Ok(())
+    }
+
+    pub fn apply_page_wal_record(&mut self, record: &PageWalRecord) -> Result<()> {
+        match &record.mutation {
+            PageWalMutation::Put {
+                cid,
+                eid,
+                rid,
+                fields,
+            } if *cid == self.cid && *eid == self.eid => {
+                if self.directory.resolve(*rid).is_ok() && self.get(*rid).is_ok() {
+                    return Ok(());
+                }
+                let borrowed: Vec<(FieldId, &[u8])> = fields
+                    .iter()
+                    .map(|(field, bytes)| (*field, bytes.as_slice()))
+                    .collect();
+                self.apply_put(*rid, &borrowed)
+            }
+            PageWalMutation::Delete { cid, eid, rid } if *cid == self.cid && *eid == self.eid => {
+                if self.directory.resolve(*rid).is_err() || self.get(*rid).is_err() {
+                    return Ok(());
+                }
+                self.delete(*rid)
+            }
+            _ => Ok(()),
+        }
+    }
+
+    fn apply_put(&mut self, rid: Rid, fields: &[(FieldId, &[u8])]) -> Result<()> {
         let sid = Sid(self.next_sid);
         let slot = RecordSlot::from_fields(sid, fields);
         let address = self.write_slot(&slot)?;
         self.directory.insert(rid, address);
-        self.next_rid = self.next_rid.saturating_add(1);
+        self.next_rid = self.next_rid.max(rid.0.saturating_add(1));
         self.next_sid = self.next_sid.saturating_add(1).max(1);
         self.flush_directory()?;
-        Ok(rid)
+        Ok(())
     }
 
     pub fn get(&self, rid: Rid) -> Result<Vec<u8>> {

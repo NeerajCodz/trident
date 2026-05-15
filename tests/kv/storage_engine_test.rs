@@ -11,7 +11,7 @@ use tempfile::tempdir;
 use trident::index::{AdjacencyIndex, BTreeIndex, HnswIndex, IndexPlugin};
 use trident::storage::lsm::LsmIndex;
 use trident::store::{
-    IndexInsert, MaintenanceCycleOptions, RecordId, RecordStore, SharedStorageEngine,
+    BatchRecord, IndexInsert, MaintenanceCycleOptions, RecordId, RecordStore, SharedStorageEngine,
     StorageEngine, StorageMaintenanceRuntimeConfig, StorageMaintenanceRuntimeController,
     StorageWal, StorageWalEntry, StorageWalOperation, StorageWalOptions,
 };
@@ -92,6 +92,72 @@ fn three_index_types_two_data_records() {
         b"alice-profile-data"
     );
     assert_eq!(store.get(neighbors[0].to).unwrap(), b"bob-profile-data");
+}
+
+#[test]
+fn storage_engine_batch_put_uses_one_directory_flush_and_replays_indexes() {
+    let dir = tempdir().unwrap();
+    let index_dir = dir.path().join("indexes");
+    let mut engine = StorageEngine::open(dir.path(), 64 * 1024 * 1024).unwrap();
+    engine
+        .register_index(
+            "kv",
+            "default",
+            Box::new(LsmIndex::open("kv", &index_dir).unwrap()),
+        )
+        .unwrap();
+    engine
+        .register_index(
+            "bt",
+            "default",
+            Box::new(BTreeIndex::open("bt", &index_dir).unwrap()),
+        )
+        .unwrap();
+
+    let kv0 = [IndexInsert::new("kv", b"k0".to_vec())];
+    let kv1 = [
+        IndexInsert::new("kv", b"k1".to_vec()),
+        IndexInsert::new("bt", b"id:0001".to_vec()),
+    ];
+    let records = [
+        BatchRecord::new(b"value-0", &kv0),
+        BatchRecord::new(b"value-1", &kv1),
+    ];
+    let rids = engine.put_batch(&records).unwrap();
+
+    assert_eq!(rids.len(), 2);
+    assert_eq!(engine.fetch(rids[0]).unwrap(), b"value-0");
+    assert_eq!(engine.fetch(rids[1]).unwrap(), b"value-1");
+    assert_eq!(engine.lookup_rid("kv", b"k0").unwrap(), Some(rids[0]));
+    assert_eq!(engine.lookup_rid("kv", b"k1").unwrap(), Some(rids[1]));
+    assert_eq!(engine.lookup_rid("bt", b"id:0001").unwrap(), Some(rids[1]));
+
+    drop(engine);
+
+    let mut reopened = StorageEngine::open(dir.path(), 64 * 1024 * 1024).unwrap();
+    reopened
+        .register_index(
+            "kv",
+            "default",
+            Box::new(LsmIndex::open("kv", &index_dir).unwrap()),
+        )
+        .unwrap();
+    reopened
+        .register_index(
+            "bt",
+            "default",
+            Box::new(BTreeIndex::open("bt", &index_dir).unwrap()),
+        )
+        .unwrap();
+
+    assert_eq!(reopened.fetch(rids[0]).unwrap(), b"value-0");
+    assert_eq!(reopened.fetch(rids[1]).unwrap(), b"value-1");
+    assert_eq!(reopened.lookup_rid("kv", b"k0").unwrap(), Some(rids[0]));
+    assert_eq!(reopened.lookup_rid("kv", b"k1").unwrap(), Some(rids[1]));
+    assert_eq!(
+        reopened.lookup_rid("bt", b"id:0001").unwrap(),
+        Some(rids[1])
+    );
 }
 
 // ──────────────────────────────────────────────

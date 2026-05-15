@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use tempfile::tempdir;
 use trident::index::BTreeIndex;
 use trident::storage::lsm::LsmIndex;
-use trident::store::{IndexInsert, RecordId, StorageEngine};
+use trident::store::{BatchRecord, IndexInsert, RecordId, StorageEngine};
 
 fn full_stress_enabled() -> bool {
     std::env::var("TRIDENT_FULL_STRESS")
@@ -56,15 +56,20 @@ fn stress_100k_sequential_writes() {
     let key_count = stress_scale(100_000, 1_000);
     let sample_stride = (key_count / 10).max(1);
 
-    for i in 0..key_count {
-        let data = format!("record-{i:08}-{:0>64}", i);
-        let key = format!("k{i}").into_bytes();
-        let rid = engine
-            .put(data.as_bytes(), &[IndexInsert::new("kv", key)])
-            .unwrap();
-        if i % sample_stride == 0 {
-            last_rids.push(rid);
-        }
+    let values: Vec<Vec<u8>> = (0..key_count)
+        .map(|i| format!("record-{i:08}-{:0>64}", i).into_bytes())
+        .collect();
+    let indexes: Vec<Vec<IndexInsert>> = (0..key_count)
+        .map(|i| vec![IndexInsert::new("kv", format!("k{i}").into_bytes())])
+        .collect();
+    let records: Vec<BatchRecord<'_>> = values
+        .iter()
+        .zip(indexes.iter())
+        .map(|(value, inserts)| BatchRecord::new(value, inserts))
+        .collect();
+    let rids = engine.put_batch(&records).unwrap();
+    for i in (0..key_count).step_by(sample_stride) {
+        last_rids.push(rids[i]);
     }
 
     let elapsed = start.elapsed();
@@ -179,17 +184,18 @@ fn stress_lsm_large_key_count() {
         .unwrap();
 
     let key_count = stress_scale(100_000, 1_000);
-    let mut rids = Vec::with_capacity(key_count);
-
-    for i in 0..key_count {
-        let rid = engine
-            .put(
-                format!("v{i}").as_bytes(),
-                &[IndexInsert::new("kv", format!("k{i:08}").into_bytes())],
-            )
-            .unwrap();
-        rids.push(rid);
-    }
+    let values: Vec<Vec<u8>> = (0..key_count)
+        .map(|i| format!("v{i}").into_bytes())
+        .collect();
+    let indexes: Vec<Vec<IndexInsert>> = (0..key_count)
+        .map(|i| vec![IndexInsert::new("kv", format!("k{i:08}").into_bytes())])
+        .collect();
+    let records: Vec<BatchRecord<'_>> = values
+        .iter()
+        .zip(indexes.iter())
+        .map(|(value, inserts)| BatchRecord::new(value, inserts))
+        .collect();
+    let rids = engine.put_batch(&records).unwrap();
 
     let stats = engine.stats();
     assert_eq!(stats.live_records, key_count as u64);
@@ -224,17 +230,18 @@ fn stress_btree_large_key_count() {
         .unwrap();
 
     let key_count = stress_scale(50_000, 1_000);
-    let mut rids = Vec::with_capacity(key_count);
-
-    for i in 0..key_count {
-        let rid = engine
-            .put(
-                format!("row{i}").as_bytes(),
-                &[IndexInsert::new("bt", format!("id:{i:08}").into_bytes())],
-            )
-            .unwrap();
-        rids.push(rid);
-    }
+    let values: Vec<Vec<u8>> = (0..key_count)
+        .map(|i| format!("row{i}").into_bytes())
+        .collect();
+    let indexes: Vec<Vec<IndexInsert>> = (0..key_count)
+        .map(|i| vec![IndexInsert::new("bt", format!("id:{i:08}").into_bytes())])
+        .collect();
+    let records: Vec<BatchRecord<'_>> = values
+        .iter()
+        .zip(indexes.iter())
+        .map(|(value, inserts)| BatchRecord::new(value, inserts))
+        .collect();
+    let _rids = engine.put_batch(&records).unwrap();
 
     let stats = engine.stats();
     assert_eq!(stats.live_records, key_count as u64);

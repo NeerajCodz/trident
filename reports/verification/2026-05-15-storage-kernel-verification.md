@@ -66,3 +66,19 @@ Running every declared benchmark target in one local loop exceeded one hour and 
 1. Optimize durable writes by batching directory/manifest persistence and reducing per-record fsync-style work.
 2. Add a benchmark mode for short, full-target CI runs so every `[[bench]]` target can complete under a predictable budget.
 3. Add a release-mode full-stress scheduled workflow once write throughput is no longer dominated by per-record persistence overhead.
+
+## Follow-Up Implementation: Batch Write Path
+
+Implemented `StorageEngine::put_batch` and `BatchRecord` so callers can write many canonical values with one segment sync, one WAL batch, one index-application pass, and one record-directory flush. The single-record `put` path remains available and keeps its existing durability behavior.
+
+Post-change stress smoke:
+
+| Workload | Result | Notes |
+|---|---|---|
+| sequential writes | pass | 1,000 writes in 0.47s, about 2,149 ops/sec |
+| B-tree large key count | pass | 1,000-key smoke scale |
+| LSM large key count | pass | 1,000-key smoke scale |
+| hot-key workload | pass | 17,400 accesses in 0.50s |
+| uniform workload | pass | 18,657 accesses in 0.50s |
+
+Write-path improvement on the sequential smoke workload: about 79x faster than the original per-record durability path measured earlier in this report.

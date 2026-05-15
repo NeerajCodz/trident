@@ -16,9 +16,9 @@ mod segment;
 mod wal;
 
 pub use engine::{
-    CacheBlockKey, CacheEntryType, IndexCompactionReport, IndexInsert, MaintenanceCycleOptions,
-    MaintenanceCycleReport, StorageEngine, StorageEngineStats, SuggestedMaintenanceJob,
-    UnifiedBlockCache,
+    BatchRecord, CacheBlockKey, CacheEntryType, IndexCompactionReport, IndexInsert,
+    MaintenanceCycleOptions, MaintenanceCycleReport, StorageEngine, StorageEngineStats,
+    SuggestedMaintenanceJob, UnifiedBlockCache,
 };
 pub use indirection::{IndirectionTable, PhysicalLocation};
 pub use manifest::{StorageManifest, StorageManifestStore};
@@ -124,14 +124,23 @@ impl RecordStore {
     /// regardless of how many index plugins will subsequently reference
     /// this record.
     pub fn put(&mut self, bytes: &[u8]) -> Result<RecordId> {
-        let (record_offset, length) = self.active_segment.append(bytes)?;
+        let rid = self.put_unsynced(bytes)?;
         self.active_segment.sync()?;
+        Ok(rid)
+    }
+
+    pub(crate) fn put_unsynced(&mut self, bytes: &[u8]) -> Result<RecordId> {
+        let (record_offset, length) = self.active_segment.append(bytes)?;
         let loc = PhysicalLocation {
             segment_id: self.active_segment.segment_id(),
             record_offset,
             length,
         };
         Ok(self.indirection.allocate(loc))
+    }
+
+    pub(crate) fn sync_active_segment(&self) -> Result<()> {
+        self.active_segment.sync()
     }
 
     pub fn location(&self, rid: RecordId) -> Result<PhysicalLocation> {

@@ -109,6 +109,21 @@ pub struct StorageEngine {
     opened_at: Instant,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct BatchRecord<'a> {
+    pub value: &'a [u8],
+    pub index_inserts: &'a [IndexInsert],
+}
+
+impl<'a> BatchRecord<'a> {
+    pub fn new(value: &'a [u8], index_inserts: &'a [IndexInsert]) -> Self {
+        Self {
+            value,
+            index_inserts,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct IndexCompactionReport {
     pub index_type: String,
@@ -364,6 +379,102 @@ impl StorageEngine {
             .fetch_add(value.len() as u64, Ordering::Relaxed);
         record_latency(&self.write_latency, started);
         Ok(rid)
+    }
+
+    pub fn put_batch(&mut self, records: &[BatchRecord<'_>]) -> Result<Vec<RecordId>> {
+        let started = Instant::now();
+        if records.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        self.ensure_indexes_exist(
+            records
+                .iter()
+                .flat_map(|record| record.index_inserts.iter())
+                .map(|insert| insert.index_type.as_str()),
+        )?;
+
+        let mut rids = Vec::with_capacity(records.len());
+        let mut entries = Vec::with_capacity(
+            records.len()
+                + records
+                    .iter()
+                    .map(|record| record.index_inserts.len())
+                    .sum::<usize>(),
+        );
+        let mut total_value_bytes = 0_u64;
+
+        for record in records {
+            let rid = self.store.put_unsynced(record.value)?;
+            let location = self.store.location(rid)?;
+            total_value_bytes += record.value.len() as u64;
+            rids.push(rid);
+            entries.push(StorageWalEntry {
+                sequence: 0,
+                index_type: "primary".to_string(),
+                key: encode_location(location),
+                rid: Some(rid),
+                operation: StorageWalOperation::Put,
+            });
+            for insert in record.index_inserts {
+                entries.push(StorageWalEntry {
+                    sequence: 0,
+                    index_type: insert.index_type.clone(),
+                    key: insert.key.clone(),
+                    rid: Some(rid),
+                    operation: StorageWalOperation::Put,
+                });
+            }
+        }
+
+        self.store.sync_active_segment()?;
+        self.append_wal_batch(&mut entries)?;
+        KernelInvariantValidator::validate_write(
+            true,
+            false,
+            StorageOperationMetrics {
+                latency_us: started.elapsed().as_micros().min(u128::from(u64::MAX)) as u64,
+                bytes_written: total_value_bytes,
+                io_ops: entries.len() as u64,
+                ..StorageOperationMetrics::default()
+            },
+        )?;
+
+        let mut entry_cursor = 0;
+        for (record, rid) in records.iter().zip(rids.iter().copied()) {
+            entry_cursor += 1; // primary WAL entry
+            for insert in record.index_inserts {
+                let wal_entry = &entries[entry_cursor];
+                let plugin = self.indexes.get_mut(&insert.index_type).ok_or_else(|| {
+                    TridentError::InvalidConfig(format!(
+                        "unknown index plugin: {}",
+                        insert.index_type
+                    ))
+                })?;
+                plugin.put_with_sequence(&insert.key, rid, wal_entry.sequence)?;
+                entry_cursor += 1;
+            }
+        }
+
+        self.store.flush()?;
+        KernelInvariantValidator::validate_write(
+            true,
+            true,
+            StorageOperationMetrics {
+                latency_us: started.elapsed().as_micros().min(u128::from(u64::MAX)) as u64,
+                bytes_written: total_value_bytes,
+                io_ops: entries.len() as u64,
+                ..StorageOperationMetrics::default()
+            },
+        )?;
+        self.metrics
+            .writes
+            .fetch_add(records.len() as u64, Ordering::Relaxed);
+        self.metrics
+            .write_bytes
+            .fetch_add(total_value_bytes, Ordering::Relaxed);
+        record_latency(&self.write_latency, started);
+        Ok(rids)
     }
 
     pub fn put_index(&mut self, index_type: &str, key: &[u8], rid: RecordId) -> Result<()> {

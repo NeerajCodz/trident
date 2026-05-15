@@ -7,8 +7,8 @@
 //! - Lock contention tracking
 //! - Throughput measurement
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 /// Workload pattern types
@@ -118,10 +118,10 @@ impl LatencyDistribution {
             cumulative += count;
             if cumulative >= target {
                 return match i {
-                    0 => 500,      // mid-point of 0-1ms
-                    1 => 5_500,    // mid-point of 1-10ms
-                    2 => 55_000,   // mid-point of 10-100ms
-                    3 => 550_000,  // mid-point of 100-1000ms
+                    0 => 500,       // mid-point of 0-1ms
+                    1 => 5_500,     // mid-point of 1-10ms
+                    2 => 55_000,    // mid-point of 10-100ms
+                    3 => 550_000,   // mid-point of 100-1000ms
                     _ => 1_000_000, // mid-point of 1000+ms
                 };
             }
@@ -220,8 +220,7 @@ impl WriteAmplificationTracker {
     }
 
     pub fn record_wal_write(&self, bytes: u64) {
-        self.wal_bytes_written
-            .fetch_add(bytes, Ordering::Relaxed);
+        self.wal_bytes_written.fetch_add(bytes, Ordering::Relaxed);
     }
 
     pub fn logical_bytes(&self) -> u64 {
@@ -474,7 +473,7 @@ mod tests {
     #[test]
     fn latency_distribution_buckets() {
         let mut dist = LatencyDistribution::new();
-        dist.record(500);   // 0-1ms
+        dist.record(500); // 0-1ms
         dist.record(5_000); // 1-10ms
         dist.record(50_000); // 10-100ms
 
@@ -510,9 +509,9 @@ mod tests {
     #[test]
     fn lock_contention_tracking() {
         let tracker = LockContentionTracker::new();
-        tracker.record_acquisition(50);   // uncontended
-        tracker.record_acquisition(200);  // contended
-        tracker.record_acquisition(50);   // uncontended
+        tracker.record_acquisition(50); // uncontended
+        tracker.record_acquisition(200); // contended
+        tracker.record_acquisition(50); // uncontended
 
         assert_eq!(tracker.total_attempts(), 3);
         assert_eq!(tracker.contended_attempts(), 1);

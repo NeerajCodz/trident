@@ -5,21 +5,19 @@
 //! - BtreeMetadata (32 bytes): order, height, node_count, root_rid, generation, sequence
 //! - Node index entries: [page_id (8B) | rid (8B)] sorted by page_id
 
-use crate::formats::{
-    BinaryWriter, ChecksumValidator, FormatHeader, IndexType, TRIDENT_MAGIC,
-};
+use crate::formats::{BinaryWriter, ChecksumValidator, FormatHeader, IndexType, TRIDENT_MAGIC};
 use std::collections::BTreeMap;
 use std::io::{self, Read, Write};
 
 /// B-tree metadata (32 bytes when serialized)
 #[derive(Debug, Clone)]
 pub struct BtreeBinaryMetadata {
-    pub order: u32,              // B-tree order (max keys per node)
-    pub height: u32,             // Tree height
-    pub node_count: u32,         // Total internal nodes
-    pub root_rid: u64,           // RID of root node
-    pub generation: u64,         // Compaction generation
-    pub sequence: u64,           // WAL sequence number
+    pub order: u32,      // B-tree order (max keys per node)
+    pub height: u32,     // Tree height
+    pub node_count: u32, // Total internal nodes
+    pub root_rid: u64,   // RID of root node
+    pub generation: u64, // Compaction generation
+    pub sequence: u64,   // WAL sequence number
 }
 
 impl BtreeBinaryMetadata {

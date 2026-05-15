@@ -5,9 +5,7 @@
 //! - HnswMetadata (40 bytes): num_vectors, vector_dim, max_layer, entry_point, generation, sequence
 //! - Vector metadata entries: [vector_id (8B) | rid (8B) | layer (4B)]
 
-use crate::formats::{
-    BinaryWriter, ChecksumValidator, FormatHeader, IndexType, TRIDENT_MAGIC,
-};
+use crate::formats::{BinaryWriter, ChecksumValidator, FormatHeader, IndexType, TRIDENT_MAGIC};
 use std::collections::BTreeMap;
 use std::io::{self, Read, Write};
 
@@ -285,9 +283,7 @@ impl HnswBinaryReader {
 
     /// Get entry point RID
     pub fn entry_point_rid(&self) -> Option<u64> {
-        self.vectors
-            .get(&self.metadata.entry_point)
-            .map(|v| v.rid)
+        self.vectors.get(&self.metadata.entry_point).map(|v| v.rid)
     }
 }
 

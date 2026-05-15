@@ -9,11 +9,34 @@ use trident::index::BTreeIndex;
 use trident::storage::lsm::LsmIndex;
 use trident::store::{IndexInsert, RecordId, StorageEngine};
 
+fn full_stress_enabled() -> bool {
+    std::env::var("TRIDENT_FULL_STRESS")
+        .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+        .unwrap_or(false)
+}
+
+fn stress_scale(full_count: usize, smoke_count: usize) -> usize {
+    std::env::var("TRIDENT_STRESS_KEY_COUNT")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|count| *count > 0)
+        .unwrap_or_else(|| {
+            if full_stress_enabled() {
+                full_count
+            } else {
+                smoke_count
+            }
+        })
+}
+
 // ─────────────────────────────────────────
 // 1. Throughput & Load Testing
 // ─────────────────────────────────────────
 
-/// Stress test with 100K sequential writes (slow test, run optionally).
+/// Stress test with sequential writes.
+///
+/// Defaults to a CI-friendly smoke scale. Set `TRIDENT_FULL_STRESS=1` for the
+/// full 100K workload, or `TRIDENT_STRESS_KEY_COUNT=<n>` for a custom scale.
 #[test]
 #[ignore] // Run with: cargo test -- --ignored stress_100k
 fn stress_100k_sequential_writes() {
@@ -30,30 +53,33 @@ fn stress_100k_sequential_writes() {
 
     let start = Instant::now();
     let mut last_rids = Vec::new();
+    let key_count = stress_scale(100_000, 1_000);
+    let sample_stride = (key_count / 10).max(1);
 
-    for i in 0..100_000 {
+    for i in 0..key_count {
         let data = format!("record-{i:08}-{:0>64}", i);
         let key = format!("k{i}").into_bytes();
         let rid = engine
             .put(data.as_bytes(), &[IndexInsert::new("kv", key)])
             .unwrap();
-        if i % 10_000 == 0 {
+        if i % sample_stride == 0 {
             last_rids.push(rid);
         }
     }
 
     let elapsed = start.elapsed();
-    let throughput = 100_000.0 / elapsed.as_secs_f64();
+    let throughput = key_count as f64 / elapsed.as_secs_f64();
 
     eprintln!(
-        "100K writes in {:.2}s ({:.0} ops/sec)",
+        "{} sequential writes in {:.2}s ({:.0} ops/sec)",
+        key_count,
         elapsed.as_secs_f64(),
         throughput
     );
 
     // Verify a sample of written records.
     for (i, rid) in last_rids.iter().enumerate() {
-        let sample_idx = i * 10_000;
+        let sample_idx = i * sample_stride;
         let data = format!("record-{sample_idx:08}-{:0>64}", sample_idx);
         assert_eq!(
             engine.fetch(*rid).unwrap(),
@@ -115,9 +141,7 @@ fn stress_mixed_value_sizes() {
         for i in 0..10 {
             let value = vec![0xbb; *size];
             let key = format!("batch-{}-item-{}", batch, i).into_bytes();
-            let rid = engine
-                .put(&value, &[IndexInsert::new("kv", key)])
-                .unwrap();
+            let rid = engine.put(&value, &[IndexInsert::new("kv", key)]).unwrap();
 
             let retrieved = engine.fetch(rid).unwrap();
             assert_eq!(retrieved.len(), *size);
@@ -136,7 +160,10 @@ fn stress_mixed_value_sizes() {
 // 3. Index Size Scaling
 // ─────────────────────────────────────────
 
-/// Test LSM with >100K keys (slow test, run optionally).
+/// Test LSM with a large key count.
+///
+/// Defaults to a CI-friendly smoke scale. Set `TRIDENT_FULL_STRESS=1` for the
+/// full 100K workload, or `TRIDENT_STRESS_KEY_COUNT=<n>` for a custom scale.
 #[test]
 #[ignore] // Run with: cargo test -- --ignored stress_lsm
 fn stress_lsm_large_key_count() {
@@ -151,7 +178,7 @@ fn stress_lsm_large_key_count() {
         )
         .unwrap();
 
-    let key_count = 100_000;
+    let key_count = stress_scale(100_000, 1_000);
     let mut rids = Vec::with_capacity(key_count);
 
     for i in 0..key_count {
@@ -170,13 +197,18 @@ fn stress_lsm_large_key_count() {
     // Spot-check some lookups.
     for i in [0, key_count / 2, key_count - 1] {
         assert_eq!(
-            engine.lookup_rid("kv", format!("k{i:08}").as_bytes()).unwrap(),
+            engine
+                .lookup_rid("kv", format!("k{i:08}").as_bytes())
+                .unwrap(),
             Some(rids[i])
         );
     }
 }
 
-/// Test B-tree with >50K keys and range scans (slow test).
+/// Test B-tree with a large key count.
+///
+/// Defaults to a CI-friendly smoke scale. Set `TRIDENT_FULL_STRESS=1` for the
+/// full 50K workload, or `TRIDENT_STRESS_KEY_COUNT=<n>` for a custom scale.
 #[test]
 #[ignore] // Run with: cargo test -- --ignored stress_btree
 fn stress_btree_large_key_count() {
@@ -191,7 +223,7 @@ fn stress_btree_large_key_count() {
         )
         .unwrap();
 
-    let key_count = 50_000;
+    let key_count = stress_scale(50_000, 1_000);
     let mut rids = Vec::with_capacity(key_count);
 
     for i in 0..key_count {
@@ -242,7 +274,9 @@ fn stress_compaction_with_concurrent_writes() {
     // Verify reads still work after compaction.
     for i in [0, 500, 999] {
         assert_eq!(
-            engine.lookup_rid("kv", format!("key{i}").as_bytes()).unwrap(),
+            engine
+                .lookup_rid("kv", format!("key{i}").as_bytes())
+                .unwrap(),
             Some(RecordId(i as u64 + 1)) // RID is 1-indexed
         );
     }

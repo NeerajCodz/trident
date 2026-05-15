@@ -1,1 +1,1 @@
-pub use crate::slog::errors::{TridentError, Result};
+pub use crate::slog::errors::{Result, TridentError};

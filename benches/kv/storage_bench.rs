@@ -1,4 +1,4 @@
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use std::time::Duration;
 use tempfile::tempdir;
 use trident::bench::{LatencyDistribution, WorkloadGenerator, WorkloadPattern};
@@ -22,7 +22,8 @@ fn bench_sequential_writes(c: &mut Criterion) {
                     || {
                         let dir = tempdir().unwrap();
                         let index_dir = dir.path().join("indexes");
-                        let mut engine = StorageEngine::open(dir.path(), 128 * 1024 * 1024).unwrap();
+                        let mut engine =
+                            StorageEngine::open(dir.path(), 128 * 1024 * 1024).unwrap();
                         engine
                             .register_index(
                                 "kv",
@@ -105,9 +106,7 @@ fn bench_read_patterns(c: &mut Criterion) {
                         for _ in 0..1000 {
                             let key_idx = workload_gen.next_key();
                             let key = format!("key{key_idx:06}");
-                            engine
-                                .fetch_by_index("kv", key.as_bytes())
-                                .ok();
+                            engine.fetch_by_index("kv", key.as_bytes()).ok();
                         }
                     },
                     criterion::BatchSize::SmallInput,
@@ -135,7 +134,8 @@ fn bench_index_lookups(c: &mut Criterion) {
                     || {
                         let dir = tempdir().unwrap();
                         let index_dir = dir.path().join("indexes");
-                        let mut engine = StorageEngine::open(dir.path(), 128 * 1024 * 1024).unwrap();
+                        let mut engine =
+                            StorageEngine::open(dir.path(), 128 * 1024 * 1024).unwrap();
                         engine
                             .register_index(
                                 "kv",
@@ -234,7 +234,8 @@ fn bench_concurrent_writes(c: &mut Criterion) {
                     || {
                         let dir = tempdir().unwrap();
                         let index_dir = dir.path().join("indexes");
-                        let mut engine = StorageEngine::open(dir.path(), 128 * 1024 * 1024).unwrap();
+                        let mut engine =
+                            StorageEngine::open(dir.path(), 128 * 1024 * 1024).unwrap();
                         engine
                             .register_index(
                                 "kv",

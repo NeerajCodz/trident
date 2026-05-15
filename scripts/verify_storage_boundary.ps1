@@ -2,16 +2,16 @@ $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $PSScriptRoot
 $scanRoots = @(
-    "src\store",
-    "src\storage",
-    "src\index",
-    "src\kernel",
-    "src\wal",
-    "src\manifest",
-    "src\recovery",
-    "src\transactions",
-    "src\memory",
-    "src\cache"
+    @("src", "store"),
+    @("src", "storage"),
+    @("src", "index"),
+    @("src", "kernel"),
+    @("src", "wal"),
+    @("src", "manifest"),
+    @("src", "recovery"),
+    @("src", "transactions"),
+    @("src", "memory"),
+    @("src", "cache")
 )
 
 $forbidden = @(
@@ -33,7 +33,11 @@ $forbidden = @(
 
 $violations = @()
 foreach ($scanRoot in $scanRoots) {
-    $path = Join-Path $root $scanRoot
+    $path = $root
+    foreach ($part in $scanRoot) {
+        $path = Join-Path $path $part
+    }
+
     if (-not (Test-Path $path)) {
         continue
     }

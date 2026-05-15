@@ -1,4 +1,5 @@
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use parking_lot::Mutex;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
@@ -7,7 +8,6 @@ use tempfile::tempdir;
 use trident::bench::{LatencyDistribution, WorkloadGenerator, WorkloadPattern};
 use trident::storage::lsm::LsmIndex;
 use trident::store::{IndexInsert, StorageEngine};
-use parking_lot::Mutex;
 
 // ──────────────────────────────────────────────
 // Phase 3B: Workload Patterns & Value Scaling
@@ -20,7 +20,12 @@ fn bench_workload_patterns(c: &mut Criterion) {
     let patterns = vec![
         ("sequential", WorkloadPattern::Sequential),
         ("uniform_random", WorkloadPattern::UniformRandom),
-        ("hot_key", WorkloadPattern::HotKey { hotset_fraction: 0.8 }),
+        (
+            "hot_key",
+            WorkloadPattern::HotKey {
+                hotset_fraction: 0.8,
+            },
+        ),
         ("zipfian", WorkloadPattern::Zipfian { exponent: 0.99 }),
     ];
 
@@ -47,7 +52,10 @@ fn bench_workload_patterns(c: &mut Criterion) {
                         let data = vec![0xaa_u8; 1024];
                         let _ = engine.put(
                             &data,
-                            &[IndexInsert::new("kv", format!("key{key_idx:06}").into_bytes())],
+                            &[IndexInsert::new(
+                                "kv",
+                                format!("key{key_idx:06}").into_bytes(),
+                            )],
                         );
                     }
                 },
@@ -298,7 +306,10 @@ fn bench_hot_key_performance(c: &mut Criterion) {
                             let data = vec![0xaa_u8; 1024];
                             let _ = engine.put(
                                 &data,
-                                &[IndexInsert::new("kv", format!("key{key_idx:06}").into_bytes())],
+                                &[IndexInsert::new(
+                                    "kv",
+                                    format!("key{key_idx:06}").into_bytes(),
+                                )],
                             );
                         }
                     },

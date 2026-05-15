@@ -1,5 +1,5 @@
 use crate::kernel::ExecutionMode;
-use crate::query::{plan, QueryModel, QueryPlan};
+use crate::query::{QueryModel, QueryPlan, plan};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HybridQuery {

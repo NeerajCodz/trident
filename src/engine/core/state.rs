@@ -5,8 +5,8 @@ use crate::disk::DiskLayout;
 use crate::maintenance::{MaintenanceRuntimeController, MaintenanceScheduler};
 use crate::manifest::Manifest;
 use crate::manifest::ManifestStore;
-use crate::metrics::EngineMetrics;
 use crate::memory::{MemTable, SnapshotManager};
+use crate::metrics::EngineMetrics;
 use crate::types::{ColumnFamily, Key, VersionedValue};
 use crate::wal::Wal;
 use parking_lot::{Condvar, Mutex};
@@ -47,4 +47,3 @@ pub(crate) struct EngineInner {
     pub(crate) metrics: EngineMetrics,
     pub(crate) accelerator: Arc<dyn Accelerator>,
 }
-

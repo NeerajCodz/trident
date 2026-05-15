@@ -138,26 +138,22 @@ impl LatencyDistribution {
     }
 
     pub fn avg(&self) -> u64 {
-        if self.total_samples == 0 {
-            0
-        } else {
-            let sum: u64 = self
-                .buckets
-                .iter()
-                .enumerate()
-                .map(|(i, &count)| {
-                    let mid = match i {
-                        0 => 500,
-                        1 => 5_500,
-                        2 => 55_000,
-                        3 => 550_000,
-                        _ => 1_000_000,
-                    };
-                    mid * count
-                })
-                .sum();
-            sum / self.total_samples
-        }
+        let sum: u64 = self
+            .buckets
+            .iter()
+            .enumerate()
+            .map(|(i, &count)| {
+                let mid = match i {
+                    0 => 500,
+                    1 => 5_500,
+                    2 => 55_000,
+                    3 => 550_000,
+                    _ => 1_000_000,
+                };
+                mid * count
+            })
+            .sum();
+        sum.checked_div(self.total_samples).unwrap_or(0)
     }
 
     pub fn total_samples(&self) -> u64 {
@@ -331,11 +327,10 @@ impl LockContentionTracker {
 
     pub fn avg_wait_us(&self) -> u64 {
         let total_attempts = self.total_attempts();
-        if total_attempts == 0 {
-            0
-        } else {
-            self.total_wait_us.load(Ordering::Relaxed) / total_attempts
-        }
+        self.total_wait_us
+            .load(Ordering::Relaxed)
+            .checked_div(total_attempts)
+            .unwrap_or(0)
     }
 
     pub fn contention_rate(&self) -> f64 {

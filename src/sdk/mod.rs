@@ -1,7 +1,8 @@
 use crate::api::service::{
-    DeleteRecordRequest, DeleteRecordResponse, GetRecordRequest, GetRecordResponse,
-    PagePrimitiveStorageService, PrimitiveFieldBytes, PrimitiveStorageService, PutRecordRequest,
-    PutRecordResponse, RequestContext, StatsRequest, StatsResponse,
+    BatchRecordInput, DeleteRecordRequest, DeleteRecordResponse, GetRecordRequest,
+    GetRecordResponse, PagePrimitiveStorageService, PrimitiveFieldBytes, PrimitiveStorageService,
+    PutRecordBatchRequest, PutRecordBatchResponse, PutRecordRequest, PutRecordResponse,
+    RequestContext, StatsRequest, StatsResponse,
 };
 use crate::errors::Result;
 use crate::identity::{Cid, Eid, Rid};
@@ -52,6 +53,15 @@ impl LocalTridentClient {
             value,
             indexes,
         })
+    }
+
+    pub fn put_record_batch(
+        &self,
+        context: RequestContext,
+        records: Vec<BatchRecordInput>,
+    ) -> Result<PutRecordBatchResponse> {
+        self.service
+            .put_record_batch(PutRecordBatchRequest { context, records })
     }
 
     pub fn get_record(
@@ -168,6 +178,20 @@ impl RestTridentClient {
             body,
         )
     }
+
+    pub fn put_record_batch_request(
+        &self,
+        context: RequestContext,
+        body: Vec<u8>,
+    ) -> RemoteStorageRequest {
+        remote_request(
+            SdkTransport::Rest,
+            context,
+            "put_record_batch",
+            format!("{}/v1/records:batchPut", self.endpoint),
+            body,
+        )
+    }
 }
 
 impl GrpcTridentClient {
@@ -190,6 +214,20 @@ impl GrpcTridentClient {
             body,
         )
     }
+
+    pub fn put_record_batch_request(
+        &self,
+        context: RequestContext,
+        body: Vec<u8>,
+    ) -> RemoteStorageRequest {
+        remote_request(
+            SdkTransport::Grpc,
+            context,
+            "trident.storage.v1.RecordService/PutRecordBatch",
+            self.endpoint.clone(),
+            body,
+        )
+    }
 }
 
 impl GraphQlTridentClient {
@@ -208,6 +246,20 @@ impl GraphQlTridentClient {
             SdkTransport::GraphQl,
             context,
             "mutation.putRecord",
+            self.endpoint.clone(),
+            body,
+        )
+    }
+
+    pub fn put_record_batch_request(
+        &self,
+        context: RequestContext,
+        body: Vec<u8>,
+    ) -> RemoteStorageRequest {
+        remote_request(
+            SdkTransport::GraphQl,
+            context,
+            "mutation.putRecordBatch",
             self.endpoint.clone(),
             body,
         )

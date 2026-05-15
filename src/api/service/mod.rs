@@ -3,7 +3,9 @@ use crate::identity::{Aid, Cid, Did, Eid, FieldId, Rid};
 use crate::kernel::{KernelSnapshot, StorageKernel};
 use crate::record::PageRecordStore;
 use crate::slog;
-use crate::store::{CompactionStats, IndexInsert, RecordId, StorageEngine, StorageEngineStats};
+use crate::store::{
+    BatchRecord, CompactionStats, IndexInsert, RecordId, StorageEngine, StorageEngineStats,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -37,6 +39,23 @@ pub struct PutRecordRequest {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct PutRecordResponse {
     pub record_id: RecordId,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct BatchRecordInput {
+    pub value: Vec<u8>,
+    pub indexes: Vec<IndexInsert>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PutRecordBatchRequest {
+    pub context: RequestContext,
+    pub records: Vec<BatchRecordInput>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PutRecordBatchResponse {
+    pub record_ids: Vec<RecordId>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -182,6 +201,37 @@ impl PrimitiveStorageService {
         emit_service_event(
             &request.context,
             "put_record",
+            bytes,
+            result.is_ok(),
+            started,
+        );
+        result
+    }
+
+    pub fn put_record_batch(
+        &self,
+        request: PutRecordBatchRequest,
+    ) -> Result<PutRecordBatchResponse> {
+        let started = Instant::now();
+        let bytes = request
+            .records
+            .iter()
+            .map(|record| record.value.len() as u64)
+            .sum();
+        let borrowed: Vec<BatchRecord<'_>> = request
+            .records
+            .iter()
+            .map(|record| BatchRecord::new(&record.value, &record.indexes))
+            .collect();
+        let result = self
+            .engine
+            .lock()
+            .expect("storage service mutex poisoned")
+            .put_batch(&borrowed)
+            .map(|record_ids| PutRecordBatchResponse { record_ids });
+        emit_service_event(
+            &request.context,
+            "put_record_batch",
             bytes,
             result.is_ok(),
             started,

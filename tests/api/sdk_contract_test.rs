@@ -1,11 +1,13 @@
 use tempfile::tempdir;
-use trident::api::service::{PrimitiveFieldBytes, PrimitiveFieldId, RequestContext};
+use trident::api::service::{
+    BatchRecordInput, PrimitiveFieldBytes, PrimitiveFieldId, RequestContext,
+};
 use trident::identity::{Cid, Eid};
 use trident::sdk::{
     GraphQlTridentClient, GrpcTridentClient, LocalPageTridentClient, LocalTridentClient,
     RestTridentClient, SdkTransport,
 };
-use trident::store::StorageEngine;
+use trident::store::{IndexInsert, StorageEngine};
 
 #[test]
 fn local_sdk_executes_primitive_record_flow() {
@@ -30,6 +32,59 @@ fn local_sdk_executes_primitive_record_flow() {
             .delete_record(RequestContext::new("sdk-local-delete"), put.record_id)
             .unwrap()
             .deleted
+    );
+}
+
+#[test]
+fn local_sdk_executes_primitive_batch_record_flow() {
+    let dir = tempdir().unwrap();
+    let index_dir = dir.path().join("indexes");
+    let mut engine = StorageEngine::open(dir.path(), 1024 * 1024).unwrap();
+    engine
+        .register_index(
+            "kv",
+            "default",
+            Box::new(trident::storage::lsm::LsmIndex::open("kv", &index_dir).unwrap()),
+        )
+        .unwrap();
+    let client = LocalTridentClient::new(engine);
+
+    let batch = client
+        .put_record_batch(
+            RequestContext::new("sdk-local-batch-put"),
+            vec![
+                BatchRecordInput {
+                    value: b"batch-a".to_vec(),
+                    indexes: vec![IndexInsert::new("kv", b"a".to_vec())],
+                },
+                BatchRecordInput {
+                    value: b"batch-b".to_vec(),
+                    indexes: vec![IndexInsert::new("kv", b"b".to_vec())],
+                },
+            ],
+        )
+        .unwrap();
+
+    assert_eq!(batch.record_ids.len(), 2);
+    assert_eq!(
+        client
+            .get_record(
+                RequestContext::new("sdk-local-batch-get-a"),
+                batch.record_ids[0]
+            )
+            .unwrap()
+            .value,
+        Some(b"batch-a".to_vec())
+    );
+    assert_eq!(
+        client
+            .get_record(
+                RequestContext::new("sdk-local-batch-get-b"),
+                batch.record_ids[1]
+            )
+            .unwrap()
+            .value,
+        Some(b"batch-b".to_vec())
     );
 }
 
@@ -75,6 +130,12 @@ fn remote_sdk_clients_preserve_request_ids_and_transport() {
         .put_record_request(RequestContext::new("grpc-1"), b"body".to_vec());
     let graphql = GraphQlTridentClient::new("http://127.0.0.1:8080/graphql")
         .put_record_request(RequestContext::new("graphql-1"), b"body".to_vec());
+    let rest_batch = RestTridentClient::new("http://127.0.0.1:8080")
+        .put_record_batch_request(RequestContext::new("rest-batch-1"), b"batch".to_vec());
+    let grpc_batch = GrpcTridentClient::new("http://127.0.0.1:50051")
+        .put_record_batch_request(RequestContext::new("grpc-batch-1"), b"batch".to_vec());
+    let graphql_batch = GraphQlTridentClient::new("http://127.0.0.1:8080/graphql")
+        .put_record_batch_request(RequestContext::new("graphql-batch-1"), b"batch".to_vec());
 
     assert_eq!(rest.transport, SdkTransport::Rest);
     assert_eq!(rest.request_id, "rest-1");
@@ -82,4 +143,13 @@ fn remote_sdk_clients_preserve_request_ids_and_transport() {
     assert_eq!(grpc.request_id, "grpc-1");
     assert_eq!(graphql.transport, SdkTransport::GraphQl);
     assert_eq!(graphql.request_id, "graphql-1");
+    assert_eq!(rest_batch.operation, "put_record_batch");
+    assert_eq!(rest_batch.request_id, "rest-batch-1");
+    assert_eq!(
+        grpc_batch.operation,
+        "trident.storage.v1.RecordService/PutRecordBatch"
+    );
+    assert_eq!(grpc_batch.request_id, "grpc-batch-1");
+    assert_eq!(graphql_batch.operation, "mutation.putRecordBatch");
+    assert_eq!(graphql_batch.request_id, "graphql-batch-1");
 }

@@ -16,6 +16,7 @@ service StorageAdmin {
 service RecordStore {
   rpc GetRecord(GetRecordRequest) returns (GetRecordResponse);
   rpc PutRecord(PutRecordRequest) returns (PutRecordResponse);
+  rpc PutRecordBatch(PutRecordBatchRequest) returns (PutRecordBatchResponse);
   rpc DeleteRecord(DeleteRecordRequest) returns (DeleteRecordResponse);
 }
 
@@ -59,6 +60,9 @@ message GetRecordRequest { RequestContext context = 1; uint64 record_id = 2; }
 message GetRecordResponse { bytes value = 1; bool found = 2; }
 message PutRecordRequest { RequestContext context = 1; bytes value = 2; repeated IndexMutation indexes = 3; }
 message PutRecordResponse { uint64 record_id = 1; }
+message BatchRecordInput { bytes value = 1; repeated IndexMutation indexes = 2; }
+message PutRecordBatchRequest { RequestContext context = 1; repeated BatchRecordInput records = 2; }
+message PutRecordBatchResponse { repeated uint64 record_ids = 1; }
 message DeleteRecordRequest { RequestContext context = 1; uint64 record_id = 2; }
 message DeleteRecordResponse { bool ok = 1; }
 

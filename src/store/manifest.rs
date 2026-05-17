@@ -121,13 +121,42 @@ impl DurableFileRecord {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum ManifestEdit {
-    DurableFileCreated { logical_name: String, path: String },
-    DurableFileInstalled { logical_name: String, path: String },
-    CompactionStarted { job_id: String },
-    CompactionInstalled { job_id: String },
-    CompactionCleanupComplete { job_id: String },
-    TierMigrationStarted { object_id: String },
-    TierMigrationInstalled { object_id: String },
+    DurableFileCreated {
+        logical_name: String,
+        path: String,
+    },
+    DurableFileInstalled {
+        logical_name: String,
+        path: String,
+    },
+    CompactionStarted {
+        job_id: String,
+        old_segments: Vec<u32>,
+    },
+    CompactionInstalled {
+        job_id: String,
+        old_segments: Vec<u32>,
+        new_segment: u32,
+        records_retained: u64,
+        bytes_written: u64,
+    },
+    CompactionCleanupComplete {
+        job_id: String,
+        cleaned_segments: Vec<u32>,
+    },
+    TierMigrationStarted {
+        object_id: String,
+    },
+    TierMigrationInstalled {
+        object_id: String,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingCompactionCleanup {
+    pub job_id: String,
+    pub old_segments: Vec<u32>,
+    pub new_segment: u32,
 }
 
 impl StorageManifest {
@@ -144,6 +173,45 @@ impl StorageManifest {
             .iter()
             .map(DurableFileRecord::to_kernel_descriptor)
             .collect()
+    }
+
+    pub fn pending_compaction_cleanups(&self) -> Vec<PendingCompactionCleanup> {
+        let mut installed: HashMap<String, PendingCompactionCleanup> = HashMap::new();
+        for edit in &self.edits {
+            match edit {
+                ManifestEdit::CompactionInstalled {
+                    job_id,
+                    old_segments,
+                    new_segment,
+                    ..
+                } => {
+                    installed.insert(
+                        job_id.clone(),
+                        PendingCompactionCleanup {
+                            job_id: job_id.clone(),
+                            old_segments: old_segments.clone(),
+                            new_segment: *new_segment,
+                        },
+                    );
+                }
+                ManifestEdit::CompactionCleanupComplete {
+                    cleaned_segments, ..
+                } => {
+                    let cleaned: std::collections::HashSet<u32> =
+                        cleaned_segments.iter().copied().collect();
+                    installed.retain(|_, pending| {
+                        pending
+                            .old_segments
+                            .iter()
+                            .any(|segment_id| !cleaned.contains(segment_id))
+                    });
+                }
+                _ => {}
+            }
+        }
+        let mut pending: Vec<_> = installed.into_values().collect();
+        pending.sort_by(|left, right| left.job_id.cmp(&right.job_id));
+        pending
     }
 }
 

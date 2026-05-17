@@ -2,7 +2,7 @@ use super::manifest::{
     DurableFileKind, DurableFileRecord, ManifestEdit, StorageManifest, StorageManifestStore,
 };
 use super::wal::{StorageWal, StorageWalEntry, StorageWalOperation, StorageWalOptions};
-use super::{CompactionStats, PhysicalLocation, RecordId, RecordStore};
+use super::{CompactionStats, PhysicalLocation, PreparedCompaction, RecordId, RecordStore};
 use crate::cache::BlockCache;
 use crate::errors::{Result, TridentError};
 use crate::index::{IndexPlugin, IndexStats};
@@ -271,6 +271,7 @@ impl StorageEngine {
 
         let manifest_store = StorageManifestStore::new(root.join(Self::MANIFEST_FILE));
         let mut manifest = manifest_store.load_or_create()?;
+        reconcile_pending_compaction_cleanup(&root, &mut store, &manifest_store, &mut manifest)?;
         rebuild_durable_inventory(&root, &mut manifest)?;
         KernelInvariantValidator::validate_engine_open(&manifest.kernel_artifacts())?;
         manifest.last_sequence = replay_entries
@@ -651,17 +652,16 @@ impl StorageEngine {
 
     pub fn compact_primary(&mut self) -> Result<CompactionStats> {
         let started = Instant::now();
-        self.manifest.append_edit(ManifestEdit::CompactionStarted {
-            job_id: format!("primary-{}", self.manifest.last_sequence),
-        });
-        let stats = self.store.compact()?;
-        self.manifest
-            .append_edit(ManifestEdit::CompactionInstalled {
-                job_id: format!("primary-{}", self.manifest.last_sequence),
-            });
-        self.bump_manifest_version()?;
+        let prepared = self.prepare_primary_compaction()?;
+        let cleaned_segments = self
+            .store
+            .complete_compaction_cleanup(&prepared.old_segment_ids, prepared.new_segment_id)?;
+        self.append_manifest_edit(ManifestEdit::CompactionCleanupComplete {
+            job_id: compaction_job_id(self.manifest.last_sequence),
+            cleaned_segments,
+        })?;
         record_latency(&self.compaction_latency, started);
-        Ok(stats)
+        Ok(prepared.stats)
     }
 
     pub fn compact_indexes(&mut self) -> Result<Vec<IndexCompactionReport>> {
@@ -960,6 +960,29 @@ impl StorageEngine {
         Ok(())
     }
 
+    fn prepare_primary_compaction(&mut self) -> Result<PreparedCompaction> {
+        let job_id = compaction_job_id(self.manifest.last_sequence);
+        let old_segments = self.store.live_segment_ids()?;
+        self.append_manifest_edit(ManifestEdit::CompactionStarted {
+            job_id: job_id.clone(),
+            old_segments: old_segments.clone(),
+        })?;
+        let prepared = self.store.compact_prepare()?;
+        self.append_manifest_edit(ManifestEdit::CompactionInstalled {
+            job_id,
+            old_segments,
+            new_segment: prepared.new_segment_id,
+            records_retained: prepared.stats.records_retained,
+            bytes_written: prepared.stats.bytes_written,
+        })?;
+        Ok(prepared)
+    }
+
+    fn append_manifest_edit(&mut self, edit: ManifestEdit) -> Result<()> {
+        self.manifest.append_edit(edit);
+        self.bump_manifest_version()
+    }
+
     fn bump_manifest_version(&mut self) -> Result<()> {
         self.manifest.version += 1;
         self.manifest.primary_segments =
@@ -967,8 +990,12 @@ impl StorageEngine {
 
         let index_dir = self.root.join(Self::INDEX_DIR);
         let all_index_files = list_all_files(&index_dir)?;
+        let mut tracked_index_types = BTreeSet::new();
+        tracked_index_types.extend(self.manifest.index_files.keys().cloned());
+        tracked_index_types.extend(self.manifest.plugin_namespaces.keys().cloned());
+        tracked_index_types.extend(self.indexes.keys().cloned());
         self.manifest.index_files.clear();
-        for index_type in self.indexes.keys() {
+        for index_type in tracked_index_types {
             let prefix = format!("{index_type}.");
             let files = all_index_files
                 .iter()
@@ -1121,6 +1148,41 @@ fn rebuild_durable_inventory(root: &Path, manifest: &mut StorageManifest) -> Res
 
     manifest.set_durable_files(files);
     Ok(())
+}
+
+fn reconcile_pending_compaction_cleanup(
+    root: &Path,
+    store: &mut RecordStore,
+    manifest_store: &StorageManifestStore,
+    manifest: &mut StorageManifest,
+) -> Result<()> {
+    let pending = manifest.pending_compaction_cleanups();
+    if pending.is_empty() {
+        return Ok(());
+    }
+
+    let mut updated = false;
+    for compaction in pending {
+        let cleaned =
+            store.complete_compaction_cleanup(&compaction.old_segments, compaction.new_segment)?;
+        manifest.append_edit(ManifestEdit::CompactionCleanupComplete {
+            job_id: compaction.job_id,
+            cleaned_segments: cleaned,
+        });
+        updated = true;
+    }
+
+    if updated {
+        manifest.version += 1;
+        rebuild_durable_inventory(root, manifest)?;
+        KernelInvariantValidator::validate_durable_artifacts(&manifest.kernel_artifacts())?;
+        manifest_store.save(manifest)?;
+    }
+    Ok(())
+}
+
+fn compaction_job_id(last_sequence: u64) -> String {
+    format!("primary-{last_sequence}")
 }
 
 fn replay_primary_directory(store: &mut RecordStore, entries: &[StorageWalEntry]) -> Result<()> {

@@ -21,7 +21,7 @@ pub use engine::{
     StorageEngineOptions, StorageEngineStats, SuggestedMaintenanceJob, UnifiedBlockCache,
 };
 pub use indirection::{IndirectionTable, PhysicalLocation};
-pub use manifest::{StorageManifest, StorageManifestStore};
+pub use manifest::{ManifestEdit, PendingCompactionCleanup, StorageManifest, StorageManifestStore};
 pub use record_id::RecordId;
 pub use runtime::{
     SharedStorageEngine, StorageMaintenanceRuntimeConfig, StorageMaintenanceRuntimeController,
@@ -51,6 +51,13 @@ pub struct CompactionStats {
     pub records_dropped: u64,
     /// Total bytes of live record data written to the new segment.
     pub bytes_written: u64,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PreparedCompaction {
+    pub stats: CompactionStats,
+    pub old_segment_ids: Vec<u32>,
+    pub new_segment_id: u32,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -188,7 +195,7 @@ impl RecordStore {
     /// dropped.  The [`IndirectionTable`] is updated in-place so every
     /// outstanding [`RecordId`] remains valid.  Index plugins are
     /// **not** touched because they hold logical ids, not physical offsets.
-    pub fn compact(&mut self) -> Result<CompactionStats> {
+    pub fn compact_prepare(&mut self) -> Result<PreparedCompaction> {
         let live: Vec<RecordId> = self.indirection.live_rids().collect();
         let mut stats = CompactionStats {
             records_dropped: self.indirection.dead_count(),
@@ -227,17 +234,40 @@ impl RecordStore {
         // Install the repaired directory before any old segment is removed.
         self.flush()?;
 
-        // Remove old segment files only after the new indirection table is durable.
+        let mut old_segment_ids: Vec<u32> = old_segment_ids.into_iter().collect();
+        old_segment_ids.sort_unstable();
+
+        Ok(PreparedCompaction {
+            stats,
+            old_segment_ids,
+            new_segment_id: new_id,
+        })
+    }
+
+    pub fn complete_compaction_cleanup(
+        &mut self,
+        old_segment_ids: &[u32],
+        retained_segment_id: u32,
+    ) -> Result<Vec<u32>> {
+        let mut cleaned = Vec::new();
         for old_id in old_segment_ids {
-            if old_id != new_id {
-                let old_path = Self::seg_path(&self.dir, old_id);
-                if old_path.exists() {
-                    fs::remove_file(old_path)?;
-                }
+            if *old_id == retained_segment_id {
+                continue;
+            }
+            let old_path = Self::seg_path(&self.dir, *old_id);
+            if old_path.exists() {
+                fs::remove_file(old_path)?;
+                cleaned.push(*old_id);
             }
         }
+        cleaned.sort_unstable();
+        Ok(cleaned)
+    }
 
-        Ok(stats)
+    pub fn compact(&mut self) -> Result<CompactionStats> {
+        let plan = self.compact_prepare()?;
+        self.complete_compaction_cleanup(&plan.old_segment_ids, plan.new_segment_id)?;
+        Ok(plan.stats)
     }
 
     /// Number of live (non-deleted) records.
@@ -256,6 +286,16 @@ impl RecordStore {
 
     pub fn total_count(&self) -> u64 {
         self.indirection.total_count()
+    }
+
+    pub fn live_segment_ids(&self) -> Result<Vec<u32>> {
+        let mut segments = HashSet::new();
+        for rid in self.indirection.live_rids() {
+            segments.insert(self.indirection.locate(rid)?.segment_id);
+        }
+        let mut segments: Vec<u32> = segments.into_iter().collect();
+        segments.sort_unstable();
+        Ok(segments)
     }
 
     pub fn canonical_stats(&self) -> CanonicalStorageStats {

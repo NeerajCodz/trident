@@ -214,6 +214,10 @@ name = "durability_tiered_storage"
 path = "tests/durability/tiered_storage_test.rs"
 
 [[test]]
+name = "durability_compaction_manifest"
+path = "tests/durability/compaction_manifest_test.rs"
+
+[[test]]
 name = "sql_query_primitives"
 path = "tests/sql/query_primitives_test.rs"
 

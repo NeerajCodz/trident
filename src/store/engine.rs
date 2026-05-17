@@ -1156,13 +1156,22 @@ fn reconcile_pending_compaction_cleanup(
     manifest_store: &StorageManifestStore,
     manifest: &mut StorageManifest,
 ) -> Result<()> {
-    let pending = manifest.pending_compaction_cleanups();
-    if pending.is_empty() {
+    let pending_aborts = manifest.pending_compaction_aborts();
+    let pending_cleanups = manifest.pending_compaction_cleanups();
+    if pending_aborts.is_empty() && pending_cleanups.is_empty() {
         return Ok(());
     }
 
     let mut updated = false;
-    for compaction in pending {
+    for compaction in pending_aborts {
+        manifest.append_edit(ManifestEdit::CompactionAborted {
+            job_id: compaction.job_id,
+            old_segments: compaction.old_segments,
+            reason: "startup_reconcile_missing_install".to_string(),
+        });
+        updated = true;
+    }
+    for compaction in pending_cleanups {
         let cleaned =
             store.complete_compaction_cleanup(&compaction.old_segments, compaction.new_segment)?;
         manifest.append_edit(ManifestEdit::CompactionCleanupComplete {

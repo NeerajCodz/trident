@@ -21,7 +21,10 @@ pub use engine::{
     StorageEngineOptions, StorageEngineStats, SuggestedMaintenanceJob, UnifiedBlockCache,
 };
 pub use indirection::{IndirectionTable, PhysicalLocation};
-pub use manifest::{ManifestEdit, PendingCompactionCleanup, StorageManifest, StorageManifestStore};
+pub use manifest::{
+    ManifestEdit, PendingCompactionAbort, PendingCompactionCleanup, StorageManifest,
+    StorageManifestStore,
+};
 pub use record_id::RecordId;
 pub use runtime::{
     SharedStorageEngine, StorageMaintenanceRuntimeConfig, StorageMaintenanceRuntimeController,

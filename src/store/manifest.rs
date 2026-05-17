@@ -144,6 +144,11 @@ pub enum ManifestEdit {
         job_id: String,
         cleaned_segments: Vec<u32>,
     },
+    CompactionAborted {
+        job_id: String,
+        old_segments: Vec<u32>,
+        reason: String,
+    },
     TierMigrationStarted {
         object_id: String,
     },
@@ -157,6 +162,12 @@ pub struct PendingCompactionCleanup {
     pub job_id: String,
     pub old_segments: Vec<u32>,
     pub new_segment: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingCompactionAbort {
+    pub job_id: String,
+    pub old_segments: Vec<u32>,
 }
 
 impl StorageManifest {
@@ -206,10 +217,52 @@ impl StorageManifest {
                             .any(|segment_id| !cleaned.contains(segment_id))
                     });
                 }
+                ManifestEdit::CompactionAborted { job_id, .. } => {
+                    installed.remove(job_id);
+                }
                 _ => {}
             }
         }
         let mut pending: Vec<_> = installed.into_values().collect();
+        pending.sort_by(|left, right| left.job_id.cmp(&right.job_id));
+        pending
+    }
+
+    pub fn pending_compaction_aborts(&self) -> Vec<PendingCompactionAbort> {
+        let mut started: HashMap<String, PendingCompactionAbort> = HashMap::new();
+        let mut installed = std::collections::HashSet::new();
+        let mut terminal = std::collections::HashSet::new();
+        for edit in &self.edits {
+            match edit {
+                ManifestEdit::CompactionStarted {
+                    job_id,
+                    old_segments,
+                } => {
+                    started.insert(
+                        job_id.clone(),
+                        PendingCompactionAbort {
+                            job_id: job_id.clone(),
+                            old_segments: old_segments.clone(),
+                        },
+                    );
+                }
+                ManifestEdit::CompactionInstalled { job_id, .. } => {
+                    installed.insert(job_id.clone());
+                }
+                ManifestEdit::CompactionCleanupComplete { job_id, .. }
+                | ManifestEdit::CompactionAborted { job_id, .. } => {
+                    terminal.insert(job_id.clone());
+                }
+                _ => {}
+            }
+        }
+
+        let mut pending: Vec<_> = started
+            .into_values()
+            .filter(|started| {
+                !installed.contains(&started.job_id) && !terminal.contains(&started.job_id)
+            })
+            .collect();
         pending.sort_by(|left, right| left.job_id.cmp(&right.job_id));
         pending
     }

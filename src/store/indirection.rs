@@ -74,6 +74,12 @@ impl IndirectionTable {
         Ok(())
     }
 
+    pub fn tombstone_if_present(&mut self, rid: RecordId) {
+        if let Some(entry) = self.entries.get_mut(&rid.0) {
+            entry.alive = false;
+        }
+    }
+
     /// Install or repair a logical record mapping during WAL replay.
     pub fn upsert_live(&mut self, rid: RecordId, location: PhysicalLocation) {
         self.entries.insert(

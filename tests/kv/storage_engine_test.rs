@@ -11,9 +11,10 @@ use tempfile::tempdir;
 use trident::index::{AdjacencyIndex, BTreeIndex, HnswIndex, IndexPlugin};
 use trident::storage::lsm::LsmIndex;
 use trident::store::{
-    BatchRecord, IndexInsert, MaintenanceCycleOptions, RecordId, RecordStore, SharedStorageEngine,
-    StorageEngine, StorageMaintenanceRuntimeConfig, StorageMaintenanceRuntimeController,
-    StorageWal, StorageWalEntry, StorageWalOperation, StorageWalOptions,
+    BatchRecord, DirectorySyncPolicy, IndexInsert, MaintenanceCycleOptions, RecordId, RecordStore,
+    SharedStorageEngine, StorageEngine, StorageEngineOptions, StorageMaintenanceRuntimeConfig,
+    StorageMaintenanceRuntimeController, StorageWal, StorageWalEntry, StorageWalOperation,
+    StorageWalOptions,
 };
 
 // ──────────────────────────────────────────────
@@ -1833,15 +1834,20 @@ fn primary_wal_replay_repairs_missing_record_directory() {
                 Box::new(LsmIndex::open("kv", &index_dir).unwrap()),
             )
             .unwrap();
-        engine
+        let rid = engine
             .put(
                 b"directory-replay-value",
                 &[IndexInsert::new("kv", b"directory-key".to_vec())],
             )
-            .unwrap()
+            .unwrap();
+        engine.flush().unwrap();
+        rid
     };
 
-    std::fs::remove_file(dir.path().join("primary").join("indirection.tind")).unwrap();
+    let indirection_path = dir.path().join("primary").join("indirection.tind");
+    if indirection_path.exists() {
+        std::fs::remove_file(indirection_path).unwrap();
+    }
 
     let mut reopened = StorageEngine::open(dir.path(), 1024 * 1024).unwrap();
     reopened
@@ -1857,6 +1863,55 @@ fn primary_wal_replay_repairs_missing_record_directory() {
         reopened.fetch_by_index("kv", b"directory-key").unwrap(),
         Some(b"directory-replay-value".to_vec())
     );
+}
+
+#[test]
+fn primary_delete_wal_replay_tombstones_record_after_restart() {
+    let dir = tempdir().unwrap();
+
+    let rid = {
+        let mut engine = StorageEngine::open_with_options(
+            dir.path(),
+            1024 * 1024,
+            StorageEngineOptions {
+                directory_sync_policy: DirectorySyncPolicy::Manual,
+                ..StorageEngineOptions::default()
+            },
+        )
+        .unwrap();
+        let rid = engine.put(b"delete-after-replay", &[]).unwrap();
+        engine.delete_record(rid).unwrap();
+        rid
+    };
+
+    let reopened = StorageEngine::open(dir.path(), 1024 * 1024).unwrap();
+    assert!(reopened.fetch(rid).is_err());
+}
+
+#[test]
+fn deferred_directory_sync_recovers_latest_primary_writes() {
+    let dir = tempdir().unwrap();
+    let rid = {
+        let mut engine = StorageEngine::open_with_options(
+            dir.path(),
+            1024 * 1024,
+            StorageEngineOptions {
+                directory_sync_policy: DirectorySyncPolicy::Manual,
+                ..StorageEngineOptions::default()
+            },
+        )
+        .unwrap();
+        let rid = engine.put(b"manual-sync-recovery", &[]).unwrap();
+        let stats = engine.stats();
+        assert_eq!(stats.directory_sync_policy, DirectorySyncPolicy::Manual);
+        assert_eq!(stats.dirty_directory_entries, 1);
+        rid
+    };
+
+    std::fs::remove_file(dir.path().join("primary").join("indirection.tind")).ok();
+
+    let reopened = StorageEngine::open(dir.path(), 1024 * 1024).unwrap();
+    assert_eq!(reopened.fetch(rid).unwrap(), b"manual-sync-recovery");
 }
 
 #[test]

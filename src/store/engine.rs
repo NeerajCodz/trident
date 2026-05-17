@@ -102,11 +102,51 @@ pub struct StorageEngine {
     pending_replay: Vec<StorageWalEntry>,
     cache: UnifiedBlockCache,
     compaction_budget_bytes: u64,
+    directory_sync_policy: DirectorySyncPolicy,
+    dirty_directory_entries: u64,
     metrics: EngineMetrics,
     read_latency: LatencyTracker,
     write_latency: LatencyTracker,
     compaction_latency: LatencyTracker,
     opened_at: Instant,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum DirectorySyncPolicy {
+    Always,
+    Batch(u64),
+    Manual,
+}
+
+impl DirectorySyncPolicy {
+    pub fn should_flush(self, dirty_entries: u64) -> bool {
+        match self {
+            Self::Always => dirty_entries > 0,
+            Self::Batch(threshold) => dirty_entries >= threshold.max(1),
+            Self::Manual => false,
+        }
+    }
+}
+
+impl Default for DirectorySyncPolicy {
+    fn default() -> Self {
+        Self::Batch(64)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StorageEngineOptions {
+    pub wal: StorageWalOptions,
+    pub directory_sync_policy: DirectorySyncPolicy,
+}
+
+impl Default for StorageEngineOptions {
+    fn default() -> Self {
+        Self {
+            wal: StorageWalOptions::default(),
+            directory_sync_policy: DirectorySyncPolicy::Batch(64),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -197,6 +237,8 @@ pub struct StorageEngineStats {
     pub read_amplification: f64,
     pub write_amplification: f64,
     pub space_amplification: f64,
+    pub directory_sync_policy: DirectorySyncPolicy,
+    pub dirty_directory_entries: u64,
 }
 
 impl StorageEngine {
@@ -207,6 +249,14 @@ impl StorageEngine {
     const MANIFEST_FILE: &'static str = "MANIFEST.store";
 
     pub fn open(root: impl Into<PathBuf>, cache_capacity_bytes: usize) -> Result<Self> {
+        Self::open_with_options(root, cache_capacity_bytes, StorageEngineOptions::default())
+    }
+
+    pub fn open_with_options(
+        root: impl Into<PathBuf>,
+        cache_capacity_bytes: usize,
+        options: StorageEngineOptions,
+    ) -> Result<Self> {
         let root = root.into();
         std::fs::create_dir_all(&root)?;
         std::fs::create_dir_all(root.join(Self::INDEX_DIR))?;
@@ -214,7 +264,7 @@ impl StorageEngine {
 
         let mut store = RecordStore::open(root.join(Self::PRIMARY_DIR))?;
         let wal_path = root.join(Self::WAL_DIR).join(Self::WAL_FILE);
-        let wal = StorageWal::open(&wal_path)?;
+        let wal = StorageWal::open_with_options(&wal_path, options.wal)?;
         let replay_entries = StorageWal::replay(&wal_path)?;
         RecoveryPlan::canonical_startup().validate_deterministic_order()?;
         replay_primary_directory(&mut store, &replay_entries)?;
@@ -243,6 +293,8 @@ impl StorageEngine {
             pending_replay,
             cache: UnifiedBlockCache::new(cache_capacity_bytes),
             compaction_budget_bytes: 0,
+            directory_sync_policy: options.directory_sync_policy,
+            dirty_directory_entries: 0,
             metrics: EngineMetrics::default(),
             read_latency: LatencyTracker::new(4096),
             write_latency: LatencyTracker::new(4096),
@@ -256,48 +308,14 @@ impl StorageEngine {
         cache_capacity_bytes: usize,
         wal_options: StorageWalOptions,
     ) -> Result<Self> {
-        let root = root.into();
-        std::fs::create_dir_all(&root)?;
-        std::fs::create_dir_all(root.join(Self::INDEX_DIR))?;
-        std::fs::create_dir_all(root.join(Self::WAL_DIR))?;
-
-        let mut store = RecordStore::open(root.join(Self::PRIMARY_DIR))?;
-        let wal_path = root.join(Self::WAL_DIR).join(Self::WAL_FILE);
-        let wal = StorageWal::open_with_options(&wal_path, wal_options)?;
-        let replay_entries = StorageWal::replay(&wal_path)?;
-        RecoveryPlan::canonical_startup().validate_deterministic_order()?;
-        replay_primary_directory(&mut store, &replay_entries)?;
-
-        let manifest_store = StorageManifestStore::new(root.join(Self::MANIFEST_FILE));
-        let mut manifest = manifest_store.load_or_create()?;
-        rebuild_durable_inventory(&root, &mut manifest)?;
-        KernelInvariantValidator::validate_engine_open(&manifest.kernel_artifacts())?;
-        manifest.last_sequence = replay_entries
-            .iter()
-            .map(|entry| entry.sequence)
-            .max()
-            .unwrap_or(manifest.last_sequence);
-        let pending_replay = replay_entries
-            .into_iter()
-            .filter(|entry| entry.index_type != "primary")
-            .collect();
-
-        Ok(Self {
+        Self::open_with_options(
             root,
-            store,
-            wal,
-            manifest_store,
-            manifest,
-            indexes: HashMap::new(),
-            pending_replay,
-            cache: UnifiedBlockCache::new(cache_capacity_bytes),
-            compaction_budget_bytes: 0,
-            metrics: EngineMetrics::default(),
-            read_latency: LatencyTracker::new(4096),
-            write_latency: LatencyTracker::new(4096),
-            compaction_latency: LatencyTracker::new(1024),
-            opened_at: Instant::now(),
-        })
+            cache_capacity_bytes,
+            StorageEngineOptions {
+                wal: wal_options,
+                ..StorageEngineOptions::default()
+            },
+        )
     }
 
     pub fn register_index(
@@ -362,7 +380,7 @@ impl StorageEngine {
             })?;
             plugin.put_with_sequence(&insert.key, rid, wal_entry.sequence)?;
         }
-        self.store.flush()?;
+        self.flush_directory_if_needed(1)?;
         KernelInvariantValidator::validate_write(
             true,
             true,
@@ -456,7 +474,7 @@ impl StorageEngine {
             }
         }
 
-        self.store.flush()?;
+        self.flush_directory_if_needed(records.len() as u64)?;
         KernelInvariantValidator::validate_write(
             true,
             true,
@@ -567,8 +585,15 @@ impl StorageEngine {
 
     pub fn delete_record(&mut self, rid: RecordId) -> Result<()> {
         let started = Instant::now();
+        let _sequence = self.append_wal(StorageWalEntry {
+            sequence: 0,
+            index_type: "primary".to_string(),
+            key: Vec::new(),
+            rid: Some(rid),
+            operation: StorageWalOperation::Delete,
+        })?;
         self.store.delete(rid)?;
-        self.store.flush()?;
+        self.flush_directory_if_needed(1)?;
         self.metrics.deletes.fetch_add(1, Ordering::Relaxed);
         record_latency(&self.write_latency, started);
         Ok(())
@@ -650,6 +675,7 @@ impl StorageEngine {
 
     pub fn flush(&mut self) -> Result<()> {
         self.store.flush()?;
+        self.dirty_directory_entries = 0;
         for plugin in self.indexes.values_mut() {
             plugin.flush()?;
         }
@@ -686,6 +712,14 @@ impl StorageEngine {
 
     pub fn compaction_budget_bytes(&self) -> u64 {
         self.compaction_budget_bytes
+    }
+
+    pub fn set_directory_sync_policy(&mut self, policy: DirectorySyncPolicy) {
+        self.directory_sync_policy = policy;
+    }
+
+    pub fn directory_sync_policy(&self) -> DirectorySyncPolicy {
+        self.directory_sync_policy
     }
 
     pub fn stats(&self) -> StorageEngineStats {
@@ -736,6 +770,8 @@ impl StorageEngine {
             read_amplification: if metrics.reads == 0 { 0.0 } else { 1.0 },
             write_amplification,
             space_amplification: if live_bytes == 0 { 0.0 } else { 1.0 },
+            directory_sync_policy: self.directory_sync_policy,
+            dirty_directory_entries: self.dirty_directory_entries,
         }
     }
 
@@ -879,6 +915,18 @@ impl StorageEngine {
                     "unknown index plugin: {index_type}"
                 )));
             }
+        }
+        Ok(())
+    }
+
+    fn flush_directory_if_needed(&mut self, dirtied_entries: u64) -> Result<()> {
+        self.dirty_directory_entries = self.dirty_directory_entries.saturating_add(dirtied_entries);
+        if self
+            .directory_sync_policy
+            .should_flush(self.dirty_directory_entries)
+        {
+            self.store.flush()?;
+            self.dirty_directory_entries = 0;
         }
         Ok(())
     }
@@ -1049,16 +1097,25 @@ fn rebuild_durable_inventory(root: &Path, manifest: &mut StorageManifest) -> Res
 fn replay_primary_directory(store: &mut RecordStore, entries: &[StorageWalEntry]) -> Result<()> {
     let mut repaired = false;
     for entry in entries {
-        if entry.index_type != "primary" || entry.operation != StorageWalOperation::Put {
+        if entry.index_type != "primary" {
             continue;
+        };
+        match entry.operation {
+            StorageWalOperation::Put => {
+                let Some(rid) = entry.rid else {
+                    continue;
+                };
+                let Some(location) = decode_location(&entry.key) else {
+                    continue;
+                };
+                store.replay_primary_put(rid, location)?;
+            }
+            StorageWalOperation::Delete => {
+                if let Some(rid) = entry.rid {
+                    store.replay_primary_delete(rid)?;
+                }
+            }
         }
-        let Some(rid) = entry.rid else {
-            continue;
-        };
-        let Some(location) = decode_location(&entry.key) else {
-            continue;
-        };
-        store.replay_primary_put(rid, location)?;
         repaired = true;
     }
     if repaired {

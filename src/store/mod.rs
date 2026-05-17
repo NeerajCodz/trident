@@ -16,9 +16,9 @@ mod segment;
 mod wal;
 
 pub use engine::{
-    BatchRecord, CacheBlockKey, CacheEntryType, IndexCompactionReport, IndexInsert,
-    MaintenanceCycleOptions, MaintenanceCycleReport, StorageEngine, StorageEngineStats,
-    SuggestedMaintenanceJob, UnifiedBlockCache,
+    BatchRecord, CacheBlockKey, CacheEntryType, DirectorySyncPolicy, IndexCompactionReport,
+    IndexInsert, MaintenanceCycleOptions, MaintenanceCycleReport, StorageEngine,
+    StorageEngineOptions, StorageEngineStats, SuggestedMaintenanceJob, UnifiedBlockCache,
 };
 pub use indirection::{IndirectionTable, PhysicalLocation};
 pub use manifest::{StorageManifest, StorageManifestStore};
@@ -153,6 +153,11 @@ impl RecordStore {
 
     pub fn replay_primary_put(&mut self, rid: RecordId, location: PhysicalLocation) -> Result<()> {
         self.indirection.upsert_live(rid, location);
+        Ok(())
+    }
+
+    pub fn replay_primary_delete(&mut self, rid: RecordId) -> Result<()> {
+        self.indirection.tombstone_if_present(rid);
         Ok(())
     }
 

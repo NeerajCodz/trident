@@ -599,6 +599,35 @@ impl StorageEngine {
         Ok(())
     }
 
+    pub fn delete_records(&mut self, rids: &[RecordId]) -> Result<()> {
+        if rids.is_empty() {
+            return Ok(());
+        }
+
+        let started = Instant::now();
+        let mut entries: Vec<StorageWalEntry> = rids
+            .iter()
+            .copied()
+            .map(|rid| StorageWalEntry {
+                sequence: 0,
+                index_type: "primary".to_string(),
+                key: Vec::new(),
+                rid: Some(rid),
+                operation: StorageWalOperation::Delete,
+            })
+            .collect();
+        self.append_wal_batch(&mut entries)?;
+        for rid in rids {
+            self.store.delete(*rid)?;
+        }
+        self.flush_directory_if_needed(rids.len() as u64)?;
+        self.metrics
+            .deletes
+            .fetch_add(rids.len() as u64, Ordering::Relaxed);
+        record_latency(&self.write_latency, started);
+        Ok(())
+    }
+
     pub fn delete_by_index(&mut self, index_type: &str, key: &[u8]) -> Result<Option<RecordId>> {
         let rid = self.lookup_rid(index_type, key)?;
         self.delete_index(index_type, key)?;

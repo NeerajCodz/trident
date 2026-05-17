@@ -1915,6 +1915,33 @@ fn deferred_directory_sync_recovers_latest_primary_writes() {
 }
 
 #[test]
+fn batch_primary_delete_wal_replay_tombstones_records_after_restart() {
+    let dir = tempdir().unwrap();
+    let (rid_a, rid_b) = {
+        let mut engine = StorageEngine::open_with_options(
+            dir.path(),
+            1024 * 1024,
+            StorageEngineOptions {
+                directory_sync_policy: DirectorySyncPolicy::Manual,
+                ..StorageEngineOptions::default()
+            },
+        )
+        .unwrap();
+        let rid_a = engine.put(b"batch-delete-a", &[]).unwrap();
+        let rid_b = engine.put(b"batch-delete-b", &[]).unwrap();
+        engine.delete_records(&[rid_a, rid_b]).unwrap();
+        let stats = engine.stats();
+        assert_eq!(stats.directory_sync_policy, DirectorySyncPolicy::Manual);
+        assert_eq!(stats.dirty_directory_entries, 4);
+        (rid_a, rid_b)
+    };
+
+    let reopened = StorageEngine::open(dir.path(), 1024 * 1024).unwrap();
+    assert!(reopened.fetch(rid_a).is_err());
+    assert!(reopened.fetch(rid_b).is_err());
+}
+
+#[test]
 fn stale_secondary_pointer_is_not_returned_after_primary_delete() {
     let dir = tempdir().unwrap();
     let index_dir = dir.path().join("indexes");

@@ -1,3 +1,6 @@
+pub mod raft;
+pub mod transport;
+
 use crate::errors::{Result, TridentError};
 use crate::io::{BinaryReader, BinaryWriter, crc32c};
 use crate::store::RecordId;

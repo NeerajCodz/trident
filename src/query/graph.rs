@@ -1,4 +1,4 @@
-use crate::index::hnsw::adjacency::AdjacencyIndex;
+use crate::index::adjacency::AdjacencyIndex;
 use crate::store::RecordId;
 use std::collections::{BTreeSet, VecDeque};
 

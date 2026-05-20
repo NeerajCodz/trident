@@ -107,6 +107,18 @@ impl WriteBatch {
     pub fn ops(&self) -> &[BatchOp] {
         &self.ops
     }
+
+    /// Truncate the batch to the given length.
+    /// Used by savepoints to roll back operations.
+    pub fn truncate(&mut self, len: usize) {
+        self.ops.truncate(len);
+    }
+
+    /// Push a single operation into the batch.
+    /// Used by nested transactions to merge child batches.
+    pub fn push_op(&mut self, op: BatchOp) {
+        self.ops.push(op);
+    }
 }
 
 impl From<&str> for ColumnFamily {

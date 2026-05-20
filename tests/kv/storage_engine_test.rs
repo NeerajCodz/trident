@@ -71,7 +71,7 @@ fn three_index_types_two_data_records() {
     // Three different index types all point to alice's single record.
     lsm.put(b"alice", alice).unwrap();
     btree.put(b"030:alice", alice).unwrap(); // age 30
-    adj.add_edge(alice, b"friend", bob).unwrap();
+    adj.add_edge(alice, b"friend", bob, std::collections::BTreeMap::new()).unwrap();
 
     // Two live records total (alice + bob), not one per index entry.
     assert_eq!(store.live_count(), 2);
@@ -457,9 +457,9 @@ fn adjacency_add_and_query_edges() {
     let bob = store.put(b"bob").unwrap();
     let carol = store.put(b"carol").unwrap();
 
-    adj.add_edge(alice, b"follows", bob).unwrap();
-    adj.add_edge(alice, b"follows", carol).unwrap();
-    adj.add_edge(alice, b"blocks", bob).unwrap();
+    adj.add_edge(alice, b"follows", bob, std::collections::BTreeMap::new()).unwrap();
+    adj.add_edge(alice, b"follows", carol, std::collections::BTreeMap::new()).unwrap();
+    adj.add_edge(alice, b"blocks", bob, std::collections::BTreeMap::new()).unwrap();
 
     let follows = adj.neighbors_with_label(alice, b"follows");
     assert_eq!(follows.len(), 2);
@@ -482,9 +482,9 @@ fn adjacency_duplicate_edges_ignored() {
     let a = store.put(b"a").unwrap();
     let b = store.put(b"b").unwrap();
 
-    adj.add_edge(a, b"rel", b).unwrap();
-    adj.add_edge(a, b"rel", b).unwrap(); // duplicate – must be ignored
-    adj.add_edge(a, b"rel", b).unwrap();
+    adj.add_edge(a, b"rel", b, std::collections::BTreeMap::new()).unwrap();
+    adj.add_edge(a, b"rel", b, std::collections::BTreeMap::new()).unwrap(); // duplicate – must be ignored
+    adj.add_edge(a, b"rel", b, std::collections::BTreeMap::new()).unwrap();
 
     assert_eq!(adj.neighbors(a).len(), 1);
 }
@@ -499,8 +499,8 @@ fn adjacency_remove_edges() {
     let b = store.put(b"b").unwrap();
     let c = store.put(b"c").unwrap();
 
-    adj.add_edge(a, b"knows", b).unwrap();
-    adj.add_edge(a, b"knows", c).unwrap();
+    adj.add_edge(a, b"knows", b, std::collections::BTreeMap::new()).unwrap();
+    adj.add_edge(a, b"knows", c, std::collections::BTreeMap::new()).unwrap();
     adj.remove_edges(a, b);
 
     let remaining = adj.neighbors(a);
@@ -533,7 +533,7 @@ fn adjacency_survives_reopen() {
         let mut adj = AdjacencyIndex::open("g", &idir).unwrap();
         let alice = store.put(b"alice").unwrap();
         let bob = store.put(b"bob").unwrap();
-        adj.add_edge(alice, b"friend", bob).unwrap();
+        adj.add_edge(alice, b"friend", bob, std::collections::BTreeMap::new()).unwrap();
         adj.flush().unwrap();
         (alice, bob)
     };
@@ -637,7 +637,7 @@ fn compaction_followed_by_all_index_queries() {
 
     lsm.put(b"alice", alice).unwrap();
     btree.put(b"alice", alice).unwrap();
-    adj.add_edge(alice, b"knows", bob).unwrap();
+    adj.add_edge(alice, b"knows", bob, std::collections::BTreeMap::new()).unwrap();
 
     store.delete(stale).unwrap();
     let stats = store.compact().unwrap();

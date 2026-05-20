@@ -42,6 +42,12 @@ pub enum TridentError {
     MaintenanceRuntimeNotRunning,
     #[error("maintenance job not found: {0}")]
     MaintenanceJobNotFound(u64),
+    #[error("query error: {0}")]
+    Query(String),
+    #[error("catalog error: {0}")]
+    Catalog(String),
+    #[error("replication error: {0}")]
+    Replication(String),
 }
 
 pub type Result<T> = std::result::Result<T, TridentError>;

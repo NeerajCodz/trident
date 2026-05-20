@@ -18,7 +18,10 @@ pub mod cli;
 pub mod config;
 pub mod datatype;
 pub mod disk;
+pub mod document;
 pub mod engine;
+pub mod events;
+pub mod execution;
 pub mod errors;
 pub mod formats;
 pub mod identity;
@@ -31,6 +34,7 @@ pub mod manifest;
 pub mod memory;
 pub mod metrics;
 pub mod page;
+pub mod planner;
 pub mod query;
 pub mod record;
 pub mod recovery;
@@ -59,5 +63,19 @@ pub use index::{
 pub use maintenance::{JobPriority, MaintenanceRuntimeConfig, RuntimeLaneConfig};
 pub use storage::lsm::LsmIndex;
 pub use store::RecordId;
+pub use catalog::schema::{
+    AttributeSchema, AttributeType, Catalog, CollectionSchema, DistanceMetric, StorageClass,
+};
+pub use document::{Edge, Record, RecordDirectory};
+pub use execution::Executor;
+pub use index::{
+    Bm25Index, GraphIndex, HybridWeights, RetrievalEngine, ScalarIndex, VectorIndex,
+    VectorStrategy,
+};
+pub use planner::{PhysicalOperator, PhysicalPlan, Planner, PlannerStats};
+pub use query::{
+    AsOfClause, BooleanExpression, DdlPlan, FullTextClause, LogicalPlan, MutationPlan, Predicate,
+    QueryLanguage, QueryOperation, QueryParser, TraversalClause, VectorClause,
+};
 pub use transactions::WriteBatch;
 pub use types::ColumnFamily;

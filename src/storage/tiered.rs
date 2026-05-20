@@ -208,3 +208,103 @@ impl TierMigrationManifest {
         cleanup
     }
 }
+
+/// Tier migration engine that automatically moves data between tiers.
+pub struct TierMigrationEngine {
+    policy: TieredStoragePolicy,
+    manifest: TierMigrationManifest,
+    heat_samples: std::collections::BTreeMap<u64, TierHeatSample>,
+    /// Maximum migrations per cycle
+    max_migrations_per_cycle: usize,
+}
+
+impl TierMigrationEngine {
+    pub fn new(policy: TieredStoragePolicy) -> Self {
+        Self {
+            policy,
+            manifest: TierMigrationManifest::default(),
+            heat_samples: std::collections::BTreeMap::new(),
+            max_migrations_per_cycle: 10,
+        }
+    }
+
+    /// Record a heat sample for a record.
+    pub fn record_access(&mut self, record_id: u64, is_write: bool) {
+        let sample = self.heat_samples.entry(record_id).or_insert(TierHeatSample {
+            reads: 0,
+            writes: 0,
+            age_seconds: 0,
+        });
+        if is_write {
+            sample.writes += 1;
+        } else {
+            sample.reads += 1;
+        }
+    }
+
+    /// Update age for all tracked records.
+    pub fn tick(&mut self, elapsed_seconds: u64) {
+        for sample in self.heat_samples.values_mut() {
+            sample.age_seconds += elapsed_seconds;
+        }
+    }
+
+    /// Run a migration cycle. Returns planned migrations.
+    pub fn run_cycle(&mut self, current_tier: StorageTier) -> Vec<TierMigrationRecord> {
+        let mut migrations = Vec::new();
+
+        for (record_id, heat) in &self.heat_samples {
+            if migrations.len() >= self.max_migrations_per_cycle {
+                break;
+            }
+
+            let request = TierMigrationRequest {
+                record_id: RecordId(*record_id),
+                current_tier,
+                heat: heat.clone(),
+                object_locator: None,
+            };
+
+            if let Some(record) = self.manifest.plan(request, &self.policy) {
+                migrations.push(record);
+            }
+        }
+
+        migrations
+    }
+
+    /// Get the recommended tier for a record based on its heat.
+    pub fn recommended_tier(&self, record_id: u64) -> StorageTier {
+        let heat = self.heat_samples.get(&record_id);
+        let score = heat
+            .map(|h| TieredStoragePolicy::heat_score(h.reads, h.writes, h.age_seconds))
+            .unwrap_or(0);
+        self.policy.place(score).tier
+    }
+
+    /// Get migration manifest.
+    pub fn manifest(&self) -> &TierMigrationManifest {
+        &self.manifest
+    }
+
+    /// Get mutable migration manifest.
+    pub fn manifest_mut(&mut self) -> &mut TierMigrationManifest {
+        &mut self.manifest
+    }
+
+    /// Get heat samples.
+    pub fn heat_samples(&self) -> &std::collections::BTreeMap<u64, TierHeatSample> {
+        &self.heat_samples
+    }
+
+    /// Clear old heat samples.
+    pub fn prune_samples(&mut self, max_age_seconds: u64) {
+        self.heat_samples.retain(|_, sample| sample.age_seconds < max_age_seconds);
+    }
+}
+
+impl Default for TierMigrationEngine {
+    fn default() -> Self {
+        Self::new(TieredStoragePolicy::default())
+    }
+}

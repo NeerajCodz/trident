@@ -1,3 +1,12 @@
+pub mod schema;
+
+pub use schema::{
+    AttributeSchema, AttributeType, BitType, Catalog, CollectionSchema, CollectionType,
+    DistanceMetric, EmbeddingModelConfig, EmbeddingOptions, EmbeddingProvider, FloatType,
+    FullTextOptions, GeoType, GraphOptions, IntegerType, NetworkType, PitRefType, ScalarType,
+    StorageClass, TemporalType, TimeSeriesOptions, VectorOptions,
+};
+
 use crate::config::Compression;
 use crate::errors::{Result, TridentError};
 use crate::identity::{Aid, Cid, Did, Eid};

@@ -1,11 +1,29 @@
-use crate::kernel::ExecutionMode;
+//! Query layer for Trident: SQL/PQL parser, logical plans, and query model definitions.
+//!
+//! The parser supports:
+//! - SQL: SELECT, INSERT, UPDATE, DELETE, CREATE/ALTER/DROP COLLECTION, EXPLAIN
+//! - PQL: FIND, WATCH, SIMILAR TO, TRAVERSE, RANK BY, AS OF
 
 pub mod graph;
 pub mod hybrid;
 pub mod kv;
+pub mod parser;
 pub mod search;
 pub mod sql;
+pub mod tokenizer;
 pub mod vector;
+
+// Re-export parser types for convenience
+pub use parser::{
+    AlterAction, AsOfClause, AttributeDdl, BooleanExpression, CteDefinition, DdlPlan,
+    FullTextClause, JoinClause, LogicalPlan, MutationPlan, OrderClause, Predicate, QueryLanguage,
+    QueryOperation, QueryParams, QueryParser, TraversalClause, VectorClause, WindowFunction,
+    parse_window_functions, substitute_params,
+};
+pub use tokenizer::{Token, tokenize};
+
+// Legacy query model types (used by other Trident modules)
+use crate::kernel::ExecutionMode;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum QueryModel {

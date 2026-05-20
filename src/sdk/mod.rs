@@ -281,3 +281,97 @@ fn remote_request(
         body,
     }
 }
+
+/// Response from a remote storage request.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RemoteStorageResponse {
+    pub status: u16,
+    pub body: Vec<u8>,
+}
+
+/// Trait for implementing remote transport (HTTP, gRPC, etc.).
+///
+/// Implementors provide the actual network communication.
+/// Users can implement this trait to use their preferred HTTP client.
+pub trait RemoteTransport: Send + Sync {
+    /// Send a remote storage request and return the response.
+    fn send(&self, request: &RemoteStorageRequest) -> Result<RemoteStorageResponse>;
+}
+
+/// A client that can execute remote storage operations.
+pub struct RemoteTridentClient {
+    transport: Box<dyn RemoteTransport>,
+}
+
+impl RemoteTridentClient {
+    pub fn new(transport: impl RemoteTransport + 'static) -> Self {
+        Self {
+            transport: Box::new(transport),
+        }
+    }
+
+    /// Execute a remote storage request.
+    pub fn execute(&self, request: &RemoteStorageRequest) -> Result<RemoteStorageResponse> {
+        self.transport.send(request)
+    }
+
+    /// Put a record via REST.
+    pub fn put_record(&self, endpoint: &str, key: &str, value: Vec<u8>) -> Result<RemoteStorageResponse> {
+        let request = RemoteStorageRequest {
+            transport: SdkTransport::Rest,
+            request_id: format!("{:016x}", std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()),
+            operation: "put_record".to_string(),
+            path: format!("{}/v1/kv/{}", endpoint, key),
+            body: value,
+        };
+        self.execute(&request)
+    }
+
+    /// Get a record via REST.
+    pub fn get_record(&self, endpoint: &str, key: &str) -> Result<RemoteStorageResponse> {
+        let request = RemoteStorageRequest {
+            transport: SdkTransport::Rest,
+            request_id: format!("{:016x}", std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()),
+            operation: "get_record".to_string(),
+            path: format!("{}/v1/kv/{}", endpoint, key),
+            body: Vec::new(),
+        };
+        self.execute(&request)
+    }
+
+    /// Delete a record via REST.
+    pub fn delete_record(&self, endpoint: &str, key: &str) -> Result<RemoteStorageResponse> {
+        let request = RemoteStorageRequest {
+            transport: SdkTransport::Rest,
+            request_id: format!("{:016x}", std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()),
+            operation: "delete_record".to_string(),
+            path: format!("{}/v1/kv/{}", endpoint, key),
+            body: Vec::new(),
+        };
+        self.execute(&request)
+    }
+
+    /// Execute a query via REST.
+    pub fn execute_query(&self, endpoint: &str, query: &str) -> Result<RemoteStorageResponse> {
+        let request = RemoteStorageRequest {
+            transport: SdkTransport::Rest,
+            request_id: format!("{:016x}", std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()),
+            operation: "execute_query".to_string(),
+            path: format!("{}/v1/query", endpoint),
+            body: serde_json::to_vec(&serde_json::json!({ "query": query })).unwrap_or_default(),
+        };
+        self.execute(&request)
+    }
+}

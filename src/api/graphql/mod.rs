@@ -1,3 +1,7 @@
+pub mod resolver;
+
+pub use resolver::{execute_graphql, GraphQLRequest, GraphQLResponse, GraphQLError};
+
 pub const STORAGE_GRAPHQL_SCHEMA: &str = r#"
 schema {
   query: Query

@@ -10,24 +10,35 @@
 //! This guarantees that each value is stored on disk exactly once,
 //! regardless of how many index plugins reference it simultaneously.
 
+pub mod adjacency;
 pub mod bitmap;
+pub mod bm25;
 pub mod btree;
+pub mod graph;
 pub mod hnsw;
+pub mod hybrid;
 pub mod inverted;
 pub mod ivf;
 pub mod rtree;
+pub mod scalar;
 pub mod specialized;
 pub mod time_series;
+pub mod vector_query;
 
+pub use adjacency::AdjacencyIndex;
 pub use bitmap::BitmapIndex;
+pub use bm25::Bm25Index;
 pub use btree::BTreeIndex;
+pub use graph::GraphIndex;
 pub use hnsw::HnswIndex;
-pub use hnsw::adjacency::AdjacencyIndex;
+pub use hybrid::{HybridHit, HybridWeights, RecordScoringOverride, RetrievalEngine};
 pub use inverted::InvertedIndex;
 pub use ivf::IvfFlatIndex;
 pub use rtree::{BoundingBox, PackedRTreeIndex};
+pub use scalar::ScalarIndex;
 pub use specialized::{SpecializedEngineContract, SpecializedEngineRegistry};
 pub use time_series::TimePartition;
+pub use vector_query::{DistanceMetric, VectorIndex, VectorStrategy};
 
 use crate::errors::Result;
 use crate::store::RecordId;

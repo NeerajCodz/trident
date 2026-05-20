@@ -32,6 +32,10 @@ pub async fn serve_rest(config: RestServerConfig) -> Result<()> {
     let state = RestState { engine };
     let app = Router::new()
         .route("/health", get(health))
+        // Query execution endpoints
+        .route("/v1/query", post(execute_query))
+        .route("/v1/explain", post(explain_query))
+        // KV endpoints
         .route("/v1/kv/{key}", get(get_key).put(put_key).delete(delete_key))
         .route(
             "/v1/cf/{cf}/kv/{key}",
@@ -85,6 +89,72 @@ pub async fn serve_rest(config: RestServerConfig) -> Result<()> {
 
 async fn health() -> Json<HealthResponse> {
     Json(HealthResponse { status: "ok" })
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct QueryRequest {
+    query: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct QueryResponse {
+    records: Vec<serde_json::Value>,
+    plan: Option<String>,
+}
+
+async fn execute_query(
+    State(state): State<RestState>,
+    Json(request): Json<QueryRequest>,
+) -> Response {
+    let started = std::time::Instant::now();
+    let response = match execute_query_internal(&state, &request.query, false) {
+        Ok(result) => Json(result).into_response(),
+        Err(error) => server_error(error),
+    };
+    log_request("POST", "/v1/query", response.status().as_u16(), started);
+    response
+}
+
+async fn explain_query(
+    State(state): State<RestState>,
+    Json(request): Json<QueryRequest>,
+) -> Response {
+    let started = std::time::Instant::now();
+    let response = match execute_query_internal(&state, &request.query, true) {
+        Ok(result) => Json(result).into_response(),
+        Err(error) => server_error(error),
+    };
+    log_request("POST", "/v1/explain", response.status().as_u16(), started);
+    response
+}
+
+fn execute_query_internal(
+    _state: &RestState,
+    query: &str,
+    explain_only: bool,
+) -> Result<QueryResponse> {
+    use crate::planner::Planner;
+    use crate::query::QueryParser;
+
+    let logical = QueryParser::parse(query)?;
+    let planner = Planner;
+    let plan = planner.plan(&logical)?;
+
+    if explain_only {
+        let explanation = planner.explain(&logical)?;
+        return Ok(QueryResponse {
+            records: Vec::new(),
+            plan: Some(explanation),
+        });
+    }
+
+    // For now, return the parsed plan as a record
+    // Full execution requires integrating the executor with the storage engine
+    let plan_json = serde_json::to_value(&plan).unwrap_or(serde_json::Value::Null);
+    Ok(QueryResponse {
+        records: vec![plan_json],
+        plan: None,
+    })
 }
 
 async fn get_key(State(state): State<RestState>, Path(key): Path<String>) -> Response {

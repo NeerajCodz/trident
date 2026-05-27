@@ -1,9 +1,9 @@
 use bytes::Bytes;
 
-use crate::engine::core::engine::TridentEngine;
+use crate::engine::core::engine::PraxisEngine;
 use crate::types::ColumnFamily;
 
-impl TridentEngine {
+impl PraxisEngine {
     pub(crate) fn cache_insert_with_partition(
         &self,
         cf: &ColumnFamily,

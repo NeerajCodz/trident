@@ -1,10 +1,10 @@
-use trident::accel::{Accelerator, CpuAccelerator};
-use trident::config::Compression;
+use praxis::accel::{Accelerator, CpuAccelerator};
+use praxis::config::Compression;
 
 #[test]
 fn cpu_accelerator_roundtrips_blocks() {
     let accel = CpuAccelerator;
-    let input = b"trident-cpu-accelerator-roundtrip";
+    let input = b"praxis-cpu-accelerator-roundtrip";
 
     for codec in [Compression::None, Compression::Lz4, Compression::Zstd] {
         let encoded = accel.encode_block(codec, input).unwrap();

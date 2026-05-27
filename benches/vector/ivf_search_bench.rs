@@ -1,5 +1,5 @@
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
-use trident::{IvfFlatIndex, RecordId};
+use praxis::{IvfFlatIndex, RecordId};
 
 fn bench_ivf_exact_search(c: &mut Criterion) {
     let mut index = IvfFlatIndex::new(4, 16);

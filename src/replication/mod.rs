@@ -1,7 +1,7 @@
 pub mod raft;
 pub mod transport;
 
-use crate::errors::{Result, TridentError};
+use crate::errors::{PraxisError, Result};
 use crate::io::{BinaryReader, BinaryWriter, crc32c};
 use crate::store::RecordId;
 use serde::{Deserialize, Serialize};
@@ -290,7 +290,7 @@ fn decode_record(payload: &[u8], path: &Path) -> Result<ReplicationRecord> {
 }
 
 fn corrupt<T>(path: &Path, reason: &str) -> Result<T> {
-    Err(TridentError::Corrupt {
+    Err(PraxisError::Corrupt {
         path: path.to_path_buf(),
         reason: reason.to_string(),
     })

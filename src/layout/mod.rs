@@ -28,12 +28,12 @@ pub struct LayoutPath {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TridentLayout {
+pub struct PraxisLayout {
     root: PathBuf,
 }
 
-impl TridentLayout {
-    pub const ROOT_DIR: &'static str = ".trident";
+impl PraxisLayout {
+    pub const ROOT_DIR: &'static str = ".praxis";
     pub const FORMAT_VERSION: u32 = 1;
 
     pub fn new(base: impl Into<PathBuf>) -> Self {

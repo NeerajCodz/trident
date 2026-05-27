@@ -1,4 +1,4 @@
-use trident::{IvfFlatIndex, RecordId};
+use praxis::{IvfFlatIndex, RecordId};
 
 #[test]
 fn ivf_exact_fallback_returns_nearest_vectors() {

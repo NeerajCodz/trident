@@ -1,4 +1,4 @@
-//! Benchmarking utilities and workload generators for Trident.
+//! Benchmarking utilities and workload generators for praxis.
 //!
 //! This module provides:
 //! - Workload generators (sequential, random, hot-key patterns)

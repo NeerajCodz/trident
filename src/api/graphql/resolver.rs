@@ -1,6 +1,6 @@
 use crate::errors::Result;
-use crate::query::QueryParser;
 use crate::planner::Planner;
+use crate::query::QueryParser;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -39,7 +39,7 @@ impl GraphQLError {
     }
 }
 
-/// Execute a GraphQL query against Trident's query engine.
+/// Execute a GraphQL query against praxis's query engine.
 ///
 /// This is a simplified GraphQL executor that:
 /// 1. Parses the GraphQL query
@@ -66,7 +66,7 @@ fn execute_graphql_internal(request: &GraphQLRequest) -> Result<serde_json::Valu
     // Parse the GraphQL query to extract operation type and fields
     let parsed = parse_graphql_query(query, variables)?;
 
-    // Execute through Trident's query engine
+    // Execute through praxis's query engine
     let logical = QueryParser::parse(&parsed.sql_query)?;
     let planner = Planner;
     let plan = planner.plan(&logical)?;
@@ -85,7 +85,10 @@ struct ParsedGraphQL {
     operation_type: String,
 }
 
-fn parse_graphql_query(query: &str, variables: &BTreeMap<String, serde_json::Value>) -> Result<ParsedGraphQL> {
+fn parse_graphql_query(
+    query: &str,
+    variables: &BTreeMap<String, serde_json::Value>,
+) -> Result<ParsedGraphQL> {
     let query = query.trim();
 
     // Simple GraphQL parser - handles basic queries
@@ -99,7 +102,10 @@ fn parse_graphql_query(query: &str, variables: &BTreeMap<String, serde_json::Val
     }
 }
 
-fn parse_query_operation(query: &str, variables: &BTreeMap<String, serde_json::Value>) -> Result<ParsedGraphQL> {
+fn parse_query_operation(
+    query: &str,
+    variables: &BTreeMap<String, serde_json::Value>,
+) -> Result<ParsedGraphQL> {
     // Extract collection name from the query
     // GraphQL query: { users(where: "...", limit: 10) { name email } }
     // Translates to: SELECT name, email FROM users WHERE ... LIMIT 10
@@ -111,14 +117,10 @@ fn parse_query_operation(query: &str, variables: &BTreeMap<String, serde_json::V
         .trim();
 
     // Find the collection name (first word before parentheses or braces)
-    let collection = content
-        .split(|c: char| c == '(' || c == '{')
-        .next()
-        .unwrap_or("")
-        .trim();
+    let collection = content.split(['(', '{']).next().unwrap_or("").trim();
 
     if collection.is_empty() {
-        return Err(crate::errors::TridentError::Query(
+        return Err(crate::errors::PraxisError::Query(
             "GraphQL query missing collection name".to_string(),
         ));
     }
@@ -140,9 +142,9 @@ fn parse_query_operation(query: &str, variables: &BTreeMap<String, serde_json::V
                 let value = value.trim().trim_matches('"').trim_matches('\'');
 
                 // Replace variable references
-                let value = if value.starts_with('$') {
+                let value = if let Some(var_name) = value.strip_prefix('$') {
                     variables
-                        .get(&value[1..])
+                        .get(var_name)
                         .map(|v| v.to_string().trim_matches('"').to_string())
                         .unwrap_or_else(|| value.to_string())
                 } else {
@@ -184,7 +186,10 @@ fn parse_query_operation(query: &str, variables: &BTreeMap<String, serde_json::V
         "*".to_string()
     };
 
-    let sql_query = format!("SELECT {} FROM {}{}{}", fields, collection, where_clause, limit_clause);
+    let sql_query = format!(
+        "SELECT {} FROM {}{}{}",
+        fields, collection, where_clause, limit_clause
+    );
 
     Ok(ParsedGraphQL {
         sql_query,
@@ -192,7 +197,10 @@ fn parse_query_operation(query: &str, variables: &BTreeMap<String, serde_json::V
     })
 }
 
-fn parse_mutation_operation(query: &str, variables: &BTreeMap<String, serde_json::Value>) -> Result<ParsedGraphQL> {
+fn parse_mutation_operation(
+    query: &str,
+    _variables: &BTreeMap<String, serde_json::Value>,
+) -> Result<ParsedGraphQL> {
     // Simple mutation parser
     // mutation { createUser(input: { name: "John", email: "john@example.com" }) { id name } }
     // Translates to: INSERT INTO users SET name = 'John', email = 'john@example.com'
@@ -204,14 +212,10 @@ fn parse_mutation_operation(query: &str, variables: &BTreeMap<String, serde_json
         .trim();
 
     // Find operation name
-    let op_name = content
-        .split(|c: char| c == '(' || c == '{')
-        .next()
-        .unwrap_or("")
-        .trim();
+    let op_name = content.split(['(', '{']).next().unwrap_or("").trim();
 
     if op_name.is_empty() {
-        return Err(crate::errors::TridentError::Query(
+        return Err(crate::errors::PraxisError::Query(
             "GraphQL mutation missing operation name".to_string(),
         ));
     }
@@ -239,7 +243,7 @@ fn parse_mutation_operation(query: &str, variables: &BTreeMap<String, serde_json
 
                 // Derive collection name from operation name
                 // createUser -> users, updatePost -> posts
-                let collection = derive_collection_name(op_name);
+                let _collection = derive_collection_name(op_name);
 
                 let sql_query = format!("INSERT INTO users SET {}", sets.join(", "));
 
@@ -251,7 +255,7 @@ fn parse_mutation_operation(query: &str, variables: &BTreeMap<String, serde_json
         }
     }
 
-    Err(crate::errors::TridentError::Query(
+    Err(crate::errors::PraxisError::Query(
         "unsupported GraphQL mutation format".to_string(),
     ))
 }

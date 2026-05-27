@@ -1,5 +1,5 @@
 use super::{MaintenanceCycleOptions, StorageEngine};
-use crate::errors::{Result, TridentError};
+use crate::errors::{PraxisError, Result};
 use crate::slog;
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -51,10 +51,10 @@ impl StorageMaintenanceRuntimeController {
         config: StorageMaintenanceRuntimeConfig,
     ) -> Result<()> {
         if self.is_running() {
-            return Err(TridentError::MaintenanceRuntimeRunning);
+            return Err(PraxisError::MaintenanceRuntimeRunning);
         }
         if config.workers == 0 {
-            return Err(TridentError::InvalidConfig(
+            return Err(PraxisError::InvalidConfig(
                 "storage maintenance runtime requires at least one worker".to_string(),
             ));
         }
@@ -71,7 +71,7 @@ impl StorageMaintenanceRuntimeController {
             let idle_sleep_ms = config.idle_sleep_ms.max(1);
             let cycle_options = config.cycle;
             let handle = thread::Builder::new()
-                .name(format!("trident-storage-maintenance-{worker_idx}"))
+                .name(format!("praxis-storage-maintenance-{worker_idx}"))
                 .spawn(move || {
                     while !stop_flag.load(Ordering::Relaxed) {
                         let report = {
@@ -98,7 +98,7 @@ impl StorageMaintenanceRuntimeController {
                         }
                     }
                 })
-                .map_err(TridentError::Io)?;
+                .map_err(PraxisError::Io)?;
             self.workers.push(handle);
         }
         Ok(())
@@ -106,7 +106,7 @@ impl StorageMaintenanceRuntimeController {
 
     pub fn stop(&mut self) -> Result<()> {
         let Some(stop) = &self.stop else {
-            return Err(TridentError::MaintenanceRuntimeNotRunning);
+            return Err(PraxisError::MaintenanceRuntimeNotRunning);
         };
         stop.store(true, Ordering::Relaxed);
         Ok(())
@@ -114,11 +114,11 @@ impl StorageMaintenanceRuntimeController {
 
     pub fn join(&mut self) -> Result<()> {
         if self.workers.is_empty() {
-            return Err(TridentError::MaintenanceRuntimeNotRunning);
+            return Err(PraxisError::MaintenanceRuntimeNotRunning);
         }
         while let Some(worker) = self.workers.pop() {
             worker.join().map_err(|_| {
-                TridentError::TaskJoin("storage maintenance worker panicked".to_string())
+                PraxisError::TaskJoin("storage maintenance worker panicked".to_string())
             })?;
         }
         self.stop = None;

@@ -1,1 +1,1 @@
-// Column-family admin methods remain implemented on TridentEngine in core::engine.
+// Column-family admin methods remain implemented on PraxisEngine in core::engine.

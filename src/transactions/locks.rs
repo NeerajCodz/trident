@@ -1,6 +1,6 @@
-use crate::errors::{Result, TridentError};
+use crate::errors::{PraxisError, Result};
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::{Arc, Mutex, Condvar};
+use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 /// Lock mode for row-level locking.
@@ -16,7 +16,7 @@ pub enum LockMode {
 #[derive(Clone, Debug)]
 struct LockRequest {
     txn_id: u64,
-    mode: LockMode,
+    _mode: LockMode,
 }
 
 /// Lock state for a single key.
@@ -80,8 +80,8 @@ impl KeyLock {
 /// Wait-for graph edge for deadlock detection.
 #[derive(Clone, Debug)]
 struct WaitEdge {
-    waiter: u64,   // txn waiting
-    holder: u64,   // txn holding the lock
+    waiter: u64, // txn waiting
+    holder: u64, // txn holding the lock
     key: Vec<u8>,
 }
 
@@ -148,10 +148,16 @@ impl LockManager {
             let key_lock = inner.locks.entry(key.to_vec()).or_insert_with(KeyLock::new);
             if key_lock.can_grant(txn_id, mode) {
                 key_lock.grant(txn_id, mode);
-                inner.txn_keys.entry(txn_id).or_default().insert(key.to_vec());
+                inner
+                    .txn_keys
+                    .entry(txn_id)
+                    .or_default()
+                    .insert(key.to_vec());
 
                 // Remove any wait edge for this txn/key
-                inner.wait_graph.retain(|e| !(e.waiter == txn_id && e.key == key));
+                inner
+                    .wait_graph
+                    .retain(|e| !(e.waiter == txn_id && e.key == key));
                 return Ok(());
             }
 
@@ -167,9 +173,12 @@ impl LockManager {
                     };
                     // Check for deadlock before adding edge
                     if self.has_cycle_with(&inner.wait_graph, &edge) {
-                        return Err(TridentError::TransactionConflict {
+                        return Err(PraxisError::TransactionConflict {
                             cf: "default".to_string(),
-                            key: format!("deadlock detected: txn {} waits for txn {}", txn_id, holder),
+                            key: format!(
+                                "deadlock detected: txn {} waits for txn {}",
+                                txn_id, holder
+                            ),
                         });
                     }
                     inner.wait_graph.push(edge);
@@ -181,7 +190,7 @@ impl LockManager {
             if remaining.is_zero() {
                 // Clean up wait edges
                 inner.wait_graph.retain(|e| e.waiter != txn_id);
-                return Err(TridentError::TransactionConflict {
+                return Err(PraxisError::TransactionConflict {
                     cf: "default".to_string(),
                     key: format!("lock timeout on key after {:?}", inner.timeout),
                 });
@@ -193,7 +202,7 @@ impl LockManager {
 
             if result.timed_out() {
                 inner.wait_graph.retain(|e| e.waiter != txn_id);
-                return Err(TridentError::TransactionConflict {
+                return Err(PraxisError::TransactionConflict {
                     cf: "default".to_string(),
                     key: format!("lock timeout on key after {:?}", inner.timeout),
                 });
@@ -214,7 +223,9 @@ impl LockManager {
                 }
             }
         }
-        inner.wait_graph.retain(|e| e.waiter != txn_id && e.holder != txn_id);
+        inner
+            .wait_graph
+            .retain(|e| e.waiter != txn_id && e.holder != txn_id);
         self.notify.notify_all();
     }
 
@@ -289,7 +300,11 @@ pub struct LockGuard<'a> {
 
 impl<'a> LockGuard<'a> {
     pub fn new(manager: &'a LockManager, txn_id: u64, key: Vec<u8>) -> Self {
-        Self { manager, txn_id, key }
+        Self {
+            manager,
+            txn_id,
+            key,
+        }
     }
 
     pub fn key(&self) -> &[u8] {
@@ -318,6 +333,7 @@ impl<'a> Drop for LockGuard<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
     use std::thread;
 
     #[test]

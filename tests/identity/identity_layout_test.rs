@@ -1,14 +1,14 @@
-use tempfile::tempdir;
-use trident::identity::{
+use praxis::identity::{
     Aid, Cid, Did, Eid, Fid, FieldId, Pid, RelativeVid, Sid, SlotAddress, Vid, VidContext,
 };
-use trident::layout::{DurableLayoutKind, TridentLayout};
+use praxis::layout::{DurableLayoutKind, PraxisLayout};
+use tempfile::tempdir;
 
 #[test]
 fn ids_format_as_compact_hex() {
     assert_eq!(Cid(1).to_string(), "0001");
     assert_eq!(Eid(0x00af).to_hex(), "00af");
-    assert_eq!(trident::Rid(0x1abc).to_string(), "0000000000001abc");
+    assert_eq!(praxis::Rid(0x1abc).to_string(), "0000000000001abc");
 }
 
 #[test]
@@ -90,13 +90,13 @@ fn sql_and_nosql_vids_keep_field_identity_separate() {
 }
 
 #[test]
-fn trident_layout_creates_canonical_tree_and_paths() {
+fn praxis_layout_creates_canonical_tree_and_paths() {
     let dir = tempdir().unwrap();
-    let layout = TridentLayout::new(dir.path());
+    let layout = PraxisLayout::new(dir.path());
     layout.create_all().unwrap();
     layout.ensure_entity_tree(Cid(1), Eid(2)).unwrap();
 
-    assert!(layout.root().ends_with(".trident"));
+    assert!(layout.root().ends_with(".praxis"));
     assert!(layout.catalog_root().exists());
     assert!(layout.catalog_root().join("indexes.cat").exists());
     assert!(layout.catalog_root().join("vector_models.cat").exists());

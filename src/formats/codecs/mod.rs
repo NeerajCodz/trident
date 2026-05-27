@@ -6,7 +6,7 @@ pub mod postings;
 pub mod row;
 pub mod vector_graph;
 
-use crate::errors::{Result, TridentError};
+use crate::errors::{PraxisError, Result};
 use std::path::PathBuf;
 
 pub const FORMAT_MAGIC: &[u8; 4] = b"TFMT";
@@ -56,8 +56,8 @@ pub fn decode_envelope(bytes: &[u8], kind: BinaryFormatKind, version: u16) -> Re
     Ok(&bytes[12..])
 }
 
-pub fn corrupt(reason: impl Into<String>) -> TridentError {
-    TridentError::Corrupt {
+pub fn corrupt(reason: impl Into<String>) -> PraxisError {
+    PraxisError::Corrupt {
         path: PathBuf::from("<memory>"),
         reason: reason.into(),
     }

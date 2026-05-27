@@ -2,4 +2,6 @@
 
 pub mod executor;
 
-pub use executor::{Executor, RecordProvider, RecordStore, matches_boolean_expression, matches_predicate};
+pub use executor::{
+    Executor, RecordProvider, RecordStore, matches_boolean_expression, matches_predicate,
+};

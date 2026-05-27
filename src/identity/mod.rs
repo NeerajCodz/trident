@@ -1,4 +1,4 @@
-use crate::errors::{Result, TridentError};
+use crate::errors::{PraxisError, Result};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -215,7 +215,7 @@ impl RelativeVid {
 
 fn required<T: Copy>(value: Option<T>, name: &str) -> Result<T> {
     value.ok_or_else(|| {
-        TridentError::InvalidConfig(format!(
+        PraxisError::InvalidConfig(format!(
             "relative VID cannot be resolved without {name} context"
         ))
     })

@@ -1,26 +1,26 @@
 use bytes::Bytes;
+use praxis::manifest::{ColumnFamilyDescriptor, CompactionJobStatus, Manifest};
+use praxis::{
+    AsyncPraxisEngine, ColumnFamily, JobPriority, MaintenanceRuntimeConfig, PraxisConfig,
+    PraxisEngine, PraxisError, RuntimeLaneConfig, WriteBatch,
+};
 use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::sync::{Arc, Barrier};
 use tempfile::tempdir;
-use trident::manifest::{ColumnFamilyDescriptor, CompactionJobStatus, Manifest};
-use trident::{
-    AsyncTridentEngine, ColumnFamily, JobPriority, MaintenanceRuntimeConfig, RuntimeLaneConfig,
-    TridentConfig, TridentEngine, TridentError, WriteBatch,
-};
 
 #[test]
 fn put_get_delete_and_recover_from_wal() {
     let dir = tempdir().unwrap();
-    let engine = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    let engine = PraxisEngine::open(PraxisConfig::new(dir.path())).unwrap();
     engine
         .put(Bytes::from("hello"), Bytes::from("world"))
         .unwrap();
     assert_eq!(engine.get("hello").unwrap().unwrap(), Bytes::from("world"));
     drop(engine);
 
-    let recovered = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    let recovered = PraxisEngine::open(PraxisConfig::new(dir.path())).unwrap();
     assert_eq!(
         recovered.get("hello").unwrap().unwrap(),
         Bytes::from("world")
@@ -32,7 +32,7 @@ fn put_get_delete_and_recover_from_wal() {
 #[test]
 fn write_batch_is_one_sequence_and_flushes_to_segment() {
     let dir = tempdir().unwrap();
-    let engine = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    let engine = PraxisEngine::open(PraxisConfig::new(dir.path())).unwrap();
     let mut batch = WriteBatch::new();
     batch.put_default(Bytes::from("a"), Bytes::from("1"));
     batch.put_default(Bytes::from("b"), Bytes::from("2"));
@@ -41,7 +41,7 @@ fn write_batch_is_one_sequence_and_flushes_to_segment() {
     assert_eq!(engine.flush().unwrap(), Some(1));
     drop(engine);
 
-    let reopened = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    let reopened = PraxisEngine::open(PraxisConfig::new(dir.path())).unwrap();
     assert_eq!(reopened.get("a").unwrap().unwrap(), Bytes::from("1"));
     assert_eq!(reopened.get("b").unwrap().unwrap(), Bytes::from("2"));
 }
@@ -49,7 +49,7 @@ fn write_batch_is_one_sequence_and_flushes_to_segment() {
 #[test]
 fn scan_returns_sorted_visible_values() {
     let dir = tempdir().unwrap();
-    let engine = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    let engine = PraxisEngine::open(PraxisConfig::new(dir.path())).unwrap();
     engine.put(Bytes::from("k3"), Bytes::from("v3")).unwrap();
     engine.put(Bytes::from("k1"), Bytes::from("v1")).unwrap();
     engine.put(Bytes::from("k2"), Bytes::from("v2")).unwrap();
@@ -66,22 +66,22 @@ fn scan_returns_sorted_visible_values() {
 #[test]
 fn large_values_move_to_value_log_and_survive_restart() {
     let dir = tempdir().unwrap();
-    let mut config = TridentConfig::new(dir.path());
+    let mut config = PraxisConfig::new(dir.path());
     config.large_value_threshold = 8;
-    let engine = TridentEngine::open(config.clone()).unwrap();
+    let engine = PraxisEngine::open(config.clone()).unwrap();
     let value = Bytes::from(vec![42_u8; 4096]);
     engine.put(Bytes::from("large"), value.clone()).unwrap();
     engine.flush().unwrap();
     drop(engine);
 
-    let reopened = TridentEngine::open(config).unwrap();
+    let reopened = PraxisEngine::open(config).unwrap();
     assert_eq!(reopened.get("large").unwrap().unwrap(), value);
 }
 
 #[test]
 fn compaction_collapses_overwrites_and_tombstones() {
     let dir = tempdir().unwrap();
-    let engine = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    let engine = PraxisEngine::open(PraxisConfig::new(dir.path())).unwrap();
     engine.put(Bytes::from("keep"), Bytes::from("old")).unwrap();
     engine.flush().unwrap();
     engine.put(Bytes::from("keep"), Bytes::from("new")).unwrap();
@@ -103,12 +103,12 @@ fn compaction_collapses_overwrites_and_tombstones() {
 #[test]
 fn compare_and_swap_enforces_expected_value() {
     let dir = tempdir().unwrap();
-    let engine = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    let engine = PraxisEngine::open(PraxisConfig::new(dir.path())).unwrap();
     engine.put(Bytes::from("cas"), Bytes::from("v1")).unwrap();
     let err = engine
         .compare_and_swap(Bytes::from("cas"), Some(b"wrong"), Bytes::from("v2"))
         .unwrap_err();
-    assert!(matches!(err, TridentError::CompareAndSwapFailed));
+    assert!(matches!(err, PraxisError::CompareAndSwapFailed));
     engine
         .compare_and_swap(Bytes::from("cas"), Some(b"v1"), Bytes::from("v2"))
         .unwrap();
@@ -118,7 +118,7 @@ fn compare_and_swap_enforces_expected_value() {
 #[test]
 fn compare_and_swap_is_atomic_under_concurrent_writers() {
     let dir = tempdir().unwrap();
-    let engine = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    let engine = PraxisEngine::open(PraxisConfig::new(dir.path())).unwrap();
     engine
         .put(Bytes::from("cas-race"), Bytes::from("seed"))
         .unwrap();
@@ -145,10 +145,10 @@ fn compare_and_swap_is_atomic_under_concurrent_writers() {
     assert_eq!(success_count, 1, "exactly one CAS should succeed");
 
     if let Err(error) = left_result {
-        assert!(matches!(error, TridentError::CompareAndSwapFailed));
+        assert!(matches!(error, PraxisError::CompareAndSwapFailed));
     }
     if let Err(error) = right_result {
-        assert!(matches!(error, TridentError::CompareAndSwapFailed));
+        assert!(matches!(error, PraxisError::CompareAndSwapFailed));
     }
 
     let final_value = engine.get("cas-race").unwrap().unwrap();
@@ -161,7 +161,7 @@ fn compare_and_swap_is_atomic_under_concurrent_writers() {
 #[test]
 fn torn_wal_suffix_is_ignored_during_recovery() {
     let dir = tempdir().unwrap();
-    let engine = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    let engine = PraxisEngine::open(PraxisConfig::new(dir.path())).unwrap();
     engine
         .put(Bytes::from("safe"), Bytes::from("value"))
         .unwrap();
@@ -172,17 +172,17 @@ fn torn_wal_suffix_is_ignored_during_recovery() {
     wal.write_all(&[0x4c, 0x41, 0x57]).unwrap();
     wal.flush().unwrap();
 
-    let reopened = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    let reopened = PraxisEngine::open(PraxisConfig::new(dir.path())).unwrap();
     assert_eq!(reopened.get("safe").unwrap().unwrap(), Bytes::from("value"));
 }
 
 #[test]
 fn wal_rotates_by_configured_segment_size_and_replays_all_segments() {
     let dir = tempdir().unwrap();
-    let mut config = TridentConfig::new(dir.path());
+    let mut config = PraxisConfig::new(dir.path());
     config.page_size = 4096;
     config.wal_segment_size = 4096;
-    let engine = TridentEngine::open(config.clone()).unwrap();
+    let engine = PraxisEngine::open(config.clone()).unwrap();
     for i in 0..4 {
         engine
             .put(
@@ -195,7 +195,7 @@ fn wal_rotates_by_configured_segment_size_and_replays_all_segments() {
     assert!(active_wal > 1, "expected WAL rotation");
     drop(engine);
 
-    let reopened = TridentEngine::open(config).unwrap();
+    let reopened = PraxisEngine::open(config).unwrap();
     for i in 0..4 {
         assert_eq!(
             reopened
@@ -210,9 +210,9 @@ fn wal_rotates_by_configured_segment_size_and_replays_all_segments() {
 #[test]
 fn group_commit_writes_survive_restart_under_concurrency() {
     let dir = tempdir().unwrap();
-    let mut config = TridentConfig::new(dir.path());
-    config.wal_sync_policy = trident::WalSyncPolicy::GroupCommit;
-    let engine = TridentEngine::open(config.clone()).unwrap();
+    let mut config = PraxisConfig::new(dir.path());
+    config.wal_sync_policy = praxis::WalSyncPolicy::GroupCommit;
+    let engine = PraxisEngine::open(config.clone()).unwrap();
 
     let barrier = Arc::new(Barrier::new(5));
     let mut handles = Vec::new();
@@ -235,7 +235,7 @@ fn group_commit_writes_survive_restart_under_concurrency() {
     }
     drop(engine);
 
-    let reopened = TridentEngine::open(config).unwrap();
+    let reopened = PraxisEngine::open(config).unwrap();
     for i in 0..4 {
         assert_eq!(
             reopened
@@ -250,7 +250,7 @@ fn group_commit_writes_survive_restart_under_concurrency() {
 #[test]
 fn deterministic_operation_stream_matches_btree_oracle() {
     let dir = tempdir().unwrap();
-    let engine = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    let engine = PraxisEngine::open(PraxisConfig::new(dir.path())).unwrap();
     let mut oracle = BTreeMap::new();
 
     for i in 0..500_u32 {
@@ -282,7 +282,7 @@ fn deterministic_operation_stream_matches_btree_oracle() {
 #[test]
 fn checkpoint_and_gc_reclaim_obsolete_files_after_compaction() {
     let dir = tempdir().unwrap();
-    let engine = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    let engine = PraxisEngine::open(PraxisConfig::new(dir.path())).unwrap();
     engine.put(Bytes::from("a"), Bytes::from("1")).unwrap();
     engine.flush().unwrap();
     engine.put(Bytes::from("a"), Bytes::from("2")).unwrap();
@@ -300,7 +300,7 @@ fn checkpoint_and_gc_reclaim_obsolete_files_after_compaction() {
 #[tokio::test]
 async fn async_engine_wraps_sync_core() {
     let dir = tempdir().unwrap();
-    let engine = AsyncTridentEngine::open(TridentConfig::new(dir.path()))
+    let engine = AsyncPraxisEngine::open(PraxisConfig::new(dir.path()))
         .await
         .unwrap();
     engine
@@ -317,11 +317,11 @@ async fn async_engine_wraps_sync_core() {
 #[test]
 fn memtable_flush_threshold_bounds_ram_growth() {
     let dir = tempdir().unwrap();
-    let mut config = TridentConfig::new(dir.path());
+    let mut config = PraxisConfig::new(dir.path());
     config.page_size = 4096;
     config.block_size = 4096;
     config.memtable_flush_threshold_bytes = 4096;
-    let engine = TridentEngine::open(config).unwrap();
+    let engine = PraxisEngine::open(config).unwrap();
     for i in 0..20 {
         engine
             .put(
@@ -340,10 +340,10 @@ fn memtable_flush_threshold_bounds_ram_growth() {
 #[test]
 fn l0_pressure_triggers_compaction_before_accepting_more_writes() {
     let dir = tempdir().unwrap();
-    let mut config = TridentConfig::new(dir.path());
+    let mut config = PraxisConfig::new(dir.path());
     config.l0_slowdown_segments = 1;
     config.l0_stop_segments = 2;
-    let engine = TridentEngine::open(config).unwrap();
+    let engine = PraxisEngine::open(config).unwrap();
 
     engine
         .put(Bytes::from("pressure/a"), Bytes::from("1"))
@@ -368,7 +368,7 @@ fn l0_pressure_triggers_compaction_before_accepting_more_writes() {
 #[test]
 fn pinned_snapshot_survives_compaction_until_released() {
     let dir = tempdir().unwrap();
-    let engine = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    let engine = PraxisEngine::open(PraxisConfig::new(dir.path())).unwrap();
     engine.put(Bytes::from("mvcc"), Bytes::from("v1")).unwrap();
     engine.flush().unwrap();
     let pinned = engine.pin_snapshot();
@@ -403,7 +403,7 @@ fn pinned_snapshot_survives_compaction_until_released() {
 #[test]
 fn multiple_pinned_snapshots_survive_compaction_with_distinct_versions() {
     let dir = tempdir().unwrap();
-    let engine = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    let engine = PraxisEngine::open(PraxisConfig::new(dir.path())).unwrap();
     engine
         .put(Bytes::from("mvcc-many"), Bytes::from("v1"))
         .unwrap();
@@ -442,7 +442,7 @@ fn multiple_pinned_snapshots_survive_compaction_with_distinct_versions() {
 #[test]
 fn segment_bloom_filter_rejects_absent_disk_key() {
     let dir = tempdir().unwrap();
-    let engine = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    let engine = PraxisEngine::open(PraxisConfig::new(dir.path())).unwrap();
     engine
         .put(Bytes::from("present"), Bytes::from("value"))
         .unwrap();
@@ -459,12 +459,12 @@ fn segment_bloom_filter_rejects_absent_disk_key() {
 #[test]
 fn column_families_are_explicit_keyspaces() {
     let dir = tempdir().unwrap();
-    let engine = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    let engine = PraxisEngine::open(PraxisConfig::new(dir.path())).unwrap();
     let mut batch = WriteBatch::new();
     batch.put("missing", Bytes::from("k"), Bytes::from("v"));
     assert!(matches!(
         engine.write_batch(batch).unwrap_err(),
-        TridentError::UnknownColumnFamily(_)
+        PraxisError::UnknownColumnFamily(_)
     ));
 
     engine
@@ -494,7 +494,7 @@ fn column_families_are_explicit_keyspaces() {
 #[test]
 fn optimistic_transaction_detects_write_conflict() {
     let dir = tempdir().unwrap();
-    let engine = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    let engine = PraxisEngine::open(PraxisConfig::new(dir.path())).unwrap();
     engine.put(Bytes::from("txn"), Bytes::from("v1")).unwrap();
     let mut txn = engine.begin_transaction();
     assert_eq!(txn.get("txn").unwrap().unwrap(), Bytes::from("v1"));
@@ -503,7 +503,7 @@ fn optimistic_transaction_detects_write_conflict() {
 
     assert!(matches!(
         txn.commit().unwrap_err(),
-        TridentError::TransactionConflict { .. }
+        PraxisError::TransactionConflict { .. }
     ));
     assert_eq!(engine.get("txn").unwrap().unwrap(), Bytes::from("v2"));
 }
@@ -511,7 +511,7 @@ fn optimistic_transaction_detects_write_conflict() {
 #[test]
 fn optimistic_transaction_commits_when_keys_do_not_change() {
     let dir = tempdir().unwrap();
-    let engine = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    let engine = PraxisEngine::open(PraxisConfig::new(dir.path())).unwrap();
     let mut txn = engine.begin_transaction();
     txn.put(Bytes::from("txn-ok"), Bytes::from("v1"));
     let sequence = txn.commit().unwrap();
@@ -522,21 +522,21 @@ fn optimistic_transaction_commits_when_keys_do_not_change() {
 #[test]
 fn effective_config_is_persisted_and_verified_on_reopen() {
     let dir = tempdir().unwrap();
-    let mut config = TridentConfig::new(dir.path());
+    let mut config = PraxisConfig::new(dir.path());
     config.page_size = 4096;
     config.block_size = 4096;
     config.wal_segment_size = 4096;
-    let engine = TridentEngine::open(config.clone()).unwrap();
+    let engine = PraxisEngine::open(config.clone()).unwrap();
     assert_eq!(engine.effective_config(), config.persisted());
     drop(engine);
 
-    let reopened = TridentEngine::open(config.clone()).unwrap();
+    let reopened = PraxisEngine::open(config.clone()).unwrap();
     assert_eq!(reopened.effective_config(), config.persisted());
 
     let mut incompatible = config;
     incompatible.block_size = 8192;
-    match TridentEngine::open(incompatible) {
-        Err(TridentError::ConfigMismatch(_)) => {}
+    match PraxisEngine::open(incompatible) {
+        Err(PraxisError::ConfigMismatch(_)) => {}
         Err(error) => panic!("unexpected error: {error}"),
         Ok(_) => panic!("expected config mismatch"),
     }
@@ -546,7 +546,7 @@ fn effective_config_is_persisted_and_verified_on_reopen() {
 fn open_from_file_loads_validated_toml_config() {
     let dir = tempdir().unwrap();
     let data_dir = dir.path().join("data");
-    let config_path = dir.path().join("trident.toml");
+    let config_path = dir.path().join("praxis.toml");
     fs::write(
         &config_path,
         format!(
@@ -574,7 +574,7 @@ l0_stop_segments = 3
     )
     .unwrap();
 
-    let engine = TridentEngine::open_from_file(&config_path).unwrap();
+    let engine = PraxisEngine::open_from_file(&config_path).unwrap();
     engine.put(Bytes::from("cfg"), Bytes::from("ok")).unwrap();
     assert_eq!(engine.get("cfg").unwrap().unwrap(), Bytes::from("ok"));
 }
@@ -582,7 +582,7 @@ l0_stop_segments = 3
 #[test]
 fn verify_checks_live_segment_digest() {
     let dir = tempdir().unwrap();
-    let engine = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    let engine = PraxisEngine::open(PraxisConfig::new(dir.path())).unwrap();
     engine
         .put(Bytes::from("verify"), Bytes::from("ok"))
         .unwrap();
@@ -602,16 +602,16 @@ fn verify_checks_live_segment_digest() {
         .unwrap();
     assert!(matches!(
         engine.verify().unwrap_err(),
-        TridentError::Corrupt { .. }
+        PraxisError::Corrupt { .. }
     ));
 }
 
 #[test]
 fn ttl_expiration_hides_entries_after_deadline() {
     let dir = tempdir().unwrap();
-    let mut config = TridentConfig::new(dir.path());
-    config.default_compaction_strategy = trident::CompactionStrategy::Leveled;
-    let engine = TridentEngine::open(config).unwrap();
+    let mut config = PraxisConfig::new(dir.path());
+    config.default_compaction_strategy = praxis::CompactionStrategy::Leveled;
+    let engine = PraxisEngine::open(config).unwrap();
     engine
         .put_with_ttl(Bytes::from("ttl-key"), Bytes::from("ttl-value"), 1)
         .unwrap();
@@ -626,13 +626,13 @@ fn ttl_expiration_hides_entries_after_deadline() {
 #[test]
 fn merge_operator_sum_i64_is_applied_deterministically() {
     let dir = tempdir().unwrap();
-    let engine = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    let engine = PraxisEngine::open(PraxisConfig::new(dir.path())).unwrap();
     engine
         .create_column_family(ColumnFamilyDescriptor {
             name: "counter".to_string(),
-            options: trident::manifest::ColumnFamilyOptions {
+            options: praxis::manifest::ColumnFamilyOptions {
                 merge_operator: Some("sum_i64".to_string()),
-                ..trident::manifest::ColumnFamilyOptions::default()
+                ..praxis::manifest::ColumnFamilyOptions::default()
             },
             ..ColumnFamilyDescriptor::default()
         })
@@ -668,7 +668,7 @@ fn prefix_scan_and_backup_restore_roundtrip() {
     let dir = tempdir().unwrap();
     let backup_dir = dir.path().join("backup");
     let restore_dir = dir.path().join("restore");
-    let engine = TridentEngine::open(TridentConfig::new(dir.path().join("live"))).unwrap();
+    let engine = PraxisEngine::open(PraxisConfig::new(dir.path().join("live"))).unwrap();
     engine.put(Bytes::from("pfx/a"), Bytes::from("1")).unwrap();
     engine.put(Bytes::from("pfx/b"), Bytes::from("2")).unwrap();
     engine
@@ -678,8 +678,8 @@ fn prefix_scan_and_backup_restore_roundtrip() {
     let rows = engine.scan_prefix(b"pfx/", 10).unwrap();
     assert_eq!(rows.len(), 2);
     engine.backup_to(&backup_dir).unwrap();
-    TridentEngine::restore_from_backup(&backup_dir, &restore_dir).unwrap();
-    let restored = TridentEngine::open(TridentConfig::new(&restore_dir)).unwrap();
+    PraxisEngine::restore_from_backup(&backup_dir, &restore_dir).unwrap();
+    let restored = PraxisEngine::open(PraxisConfig::new(&restore_dir)).unwrap();
     assert_eq!(restored.get("pfx/a").unwrap().unwrap(), Bytes::from("1"));
     assert_eq!(restored.get("pfx/b").unwrap().unwrap(), Bytes::from("2"));
     assert_eq!(restored.get("other/c").unwrap().unwrap(), Bytes::from("3"));
@@ -688,13 +688,13 @@ fn prefix_scan_and_backup_restore_roundtrip() {
 #[test]
 fn prefix_scan_cf_at_snapshot_preserves_visible_versions_across_compaction() {
     let dir = tempdir().unwrap();
-    let engine = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    let engine = PraxisEngine::open(PraxisConfig::new(dir.path())).unwrap();
     engine
         .create_column_family(ColumnFamilyDescriptor {
             name: "pages".to_string(),
-            options: trident::manifest::ColumnFamilyOptions {
+            options: praxis::manifest::ColumnFamilyOptions {
                 prefix_extractor_len: Some(4),
-                ..trident::manifest::ColumnFamilyOptions::default()
+                ..praxis::manifest::ColumnFamilyOptions::default()
             },
             ..ColumnFamilyDescriptor::default()
         })
@@ -742,16 +742,16 @@ fn prefix_scan_cf_at_snapshot_preserves_visible_versions_across_compaction() {
 #[test]
 fn maintenance_queue_runs_priority_jobs() {
     let dir = tempdir().unwrap();
-    let engine = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    let engine = PraxisEngine::open(PraxisConfig::new(dir.path())).unwrap();
     engine.put(Bytes::from("m/a"), Bytes::from("1")).unwrap();
     let low = engine
-        .enqueue_flush_job("low", trident::maintenance::JobPriority::Low)
+        .enqueue_flush_job("low", praxis::maintenance::JobPriority::Low)
         .unwrap();
     let high = engine
         .enqueue_compaction_job(
-            trident::CompactionStrategy::Leveled,
+            praxis::CompactionStrategy::Leveled,
             "high",
-            trident::maintenance::JobPriority::High,
+            praxis::maintenance::JobPriority::High,
         )
         .unwrap();
     let first = engine.run_next_maintenance_job().unwrap().unwrap();
@@ -763,7 +763,7 @@ fn maintenance_queue_runs_priority_jobs() {
 #[test]
 fn maintenance_runtime_requires_at_least_one_worker() {
     let dir = tempdir().unwrap();
-    let engine = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    let engine = PraxisEngine::open(PraxisConfig::new(dir.path())).unwrap();
     let error = engine
         .start_maintenance_runtime(MaintenanceRuntimeConfig {
             flush: RuntimeLaneConfig { workers: 0 },
@@ -772,22 +772,22 @@ fn maintenance_runtime_requires_at_least_one_worker() {
             idle_sleep_ms: 5,
         })
         .unwrap_err();
-    assert!(matches!(error, TridentError::InvalidConfig(_)));
+    assert!(matches!(error, PraxisError::InvalidConfig(_)));
 }
 
 #[test]
 fn maintenance_workers_process_queued_jobs() {
     let dir = tempdir().unwrap();
-    let engine = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    let engine = PraxisEngine::open(PraxisConfig::new(dir.path())).unwrap();
     engine.put(Bytes::from("w/a"), Bytes::from("1")).unwrap();
     engine
-        .enqueue_flush_job("worker-1", trident::maintenance::JobPriority::Normal)
+        .enqueue_flush_job("worker-1", praxis::maintenance::JobPriority::Normal)
         .unwrap();
     engine
         .enqueue_compaction_job(
-            trident::CompactionStrategy::Leveled,
+            praxis::CompactionStrategy::Leveled,
             "worker-2",
-            trident::maintenance::JobPriority::Normal,
+            praxis::maintenance::JobPriority::Normal,
         )
         .unwrap();
     let completed = engine.run_maintenance_workers(2, 8).unwrap();
@@ -801,15 +801,15 @@ fn maintenance_workers_process_queued_jobs() {
 #[test]
 fn cache_partition_percent_limits_cf_cache_usage() {
     let dir = tempdir().unwrap();
-    let mut config = TridentConfig::new(dir.path());
+    let mut config = PraxisConfig::new(dir.path());
     config.cache_size_bytes = 65536;
-    let engine = TridentEngine::open(config).unwrap();
+    let engine = PraxisEngine::open(config).unwrap();
     engine
         .create_column_family(ColumnFamilyDescriptor {
             name: "tiny-cache".to_string(),
-            options: trident::manifest::ColumnFamilyOptions {
+            options: praxis::manifest::ColumnFamilyOptions {
                 cache_partition_percent: Some(5),
-                ..trident::manifest::ColumnFamilyOptions::default()
+                ..praxis::manifest::ColumnFamilyOptions::default()
             },
             ..ColumnFamilyDescriptor::default()
         })
@@ -840,15 +840,15 @@ fn cache_partition_percent_limits_cf_cache_usage() {
 #[test]
 fn column_family_compression_override_is_honored_for_flush_and_compaction() {
     let dir = tempdir().unwrap();
-    let mut config = TridentConfig::new(dir.path());
-    config.compression = trident::Compression::Zstd;
-    let engine = TridentEngine::open(config).unwrap();
+    let mut config = PraxisConfig::new(dir.path());
+    config.compression = praxis::Compression::Zstd;
+    let engine = PraxisEngine::open(config).unwrap();
     engine
         .create_column_family(ColumnFamilyDescriptor {
             name: "lz4-pages".to_string(),
-            options: trident::manifest::ColumnFamilyOptions {
-                compression_override: Some(trident::Compression::Lz4),
-                ..trident::manifest::ColumnFamilyOptions::default()
+            options: praxis::manifest::ColumnFamilyOptions {
+                compression_override: Some(praxis::Compression::Lz4),
+                ..praxis::manifest::ColumnFamilyOptions::default()
             },
             ..ColumnFamilyDescriptor::default()
         })
@@ -886,7 +886,7 @@ fn column_family_compression_override_is_honored_for_flush_and_compaction() {
 #[test]
 fn maintenance_runtime_processes_jobs_and_reports_status() {
     let dir = tempdir().unwrap();
-    let engine = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    let engine = PraxisEngine::open(PraxisConfig::new(dir.path())).unwrap();
     engine
         .put(Bytes::from("runtime/a"), Bytes::from("1"))
         .unwrap();
@@ -925,7 +925,7 @@ fn maintenance_runtime_processes_jobs_and_reports_status() {
 #[test]
 fn unfinished_compaction_jobs_are_aborted_on_reopen() {
     let dir = tempdir().unwrap();
-    let engine = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    let engine = PraxisEngine::open(PraxisConfig::new(dir.path())).unwrap();
     engine
         .put(Bytes::from("reconcile"), Bytes::from("v1"))
         .unwrap();
@@ -937,9 +937,9 @@ fn unfinished_compaction_jobs_are_aborted_on_reopen() {
     let mut manifest = toml::from_str::<Manifest>(&manifest_text).unwrap();
     manifest
         .compaction_jobs
-        .push(trident::manifest::CompactionJobState {
+        .push(praxis::manifest::CompactionJobState {
             id: 999,
-            strategy: trident::CompactionStrategy::Leveled,
+            strategy: praxis::CompactionStrategy::Leveled,
             status: CompactionJobStatus::Running,
             source_segment_ids: vec![1],
             output_segment_id: Some(2),
@@ -948,7 +948,7 @@ fn unfinished_compaction_jobs_are_aborted_on_reopen() {
         });
     fs::write(&manifest_path, toml::to_string_pretty(&manifest).unwrap()).unwrap();
 
-    let reopened = TridentEngine::open(TridentConfig::new(dir.path())).unwrap();
+    let reopened = PraxisEngine::open(PraxisConfig::new(dir.path())).unwrap();
     let status = reopened.stats();
     assert_eq!(
         status["manifest"]["compaction_jobs"][0]["status"]

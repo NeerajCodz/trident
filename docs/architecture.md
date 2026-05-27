@@ -1,16 +1,16 @@
-# Trident Storage Kernel Architecture
+# Praxis Storage Kernel Architecture
 
-Trident is a universal storage kernel for building databases. It is not a database, query engine, SQL parser, graph query layer, vector query language, distributed coordinator, ORM, or API gateway.
+Praxis is a universal storage kernel for building databases. It is not a database, query engine, SQL parser, graph query layer, vector query language, distributed coordinator, ORM, or API gateway.
 
 The core design is:
 
 ```text
-Trident = shared durability + shared recovery + shared canonical storage
+Praxis = shared durability + shared recovery + shared canonical storage
         + shared MVCC/snapshots + shared cache/memory/IO
         + composable specialized physical engines
 ```
 
-Poiesis owns database semantics above Trident. Trident owns storage primitives below Poiesis.
+Poiesis owns database semantics above Praxis. Praxis owns storage primitives below Poiesis.
 
 ```text
 +--------------------------------------------------+
@@ -55,7 +55,7 @@ These rules are non-negotiable. A feature that violates them belongs outside the
 
 ## Physical Storage Model
 
-Trident uses a hybrid physical model where canonical data ownership is separated from access structures.
+Praxis uses a hybrid physical model where canonical data ownership is separated from access structures.
 
 | Layer | Responsibility |
 |---|---|
@@ -72,7 +72,7 @@ The central innovation is not one physical engine. It is a composable storage ke
 
 ## Storage Responsibilities
 
-Trident owns:
+Praxis owns:
 
 - WAL, redo logging, checkpoints, crash recovery, snapshots.
 - Pages, SSTables, segments, blocks, compression, checksums, file layouts.
@@ -83,7 +83,7 @@ Trident owns:
 - Direct IO, async IO, SIMD, GPU acceleration, NUMA awareness.
 - `RecordId`, single-copy value storage, pointer-only indexes.
 
-Trident does not own:
+Praxis does not own:
 
 - SQL parser, Cypher parser, GraphQL parser, vector query language.
 - Query optimizer, planner, or cost-based query semantics.
@@ -108,7 +108,7 @@ The kernel exposes primitives such as `put_record`, `open_snapshot`, `create_ind
 | Cache accounting | Per-domain hit/miss/eviction/bytes |
 | Background work | Bounded by IO, CPU, memory, and tenant budgets |
 
-Benchmarks must state hardware, durability mode, cache size, compression, dataset shape, concurrency, and correctness level. Trident should beat class-specific engines only on comparable workloads, not by mixing incompatible benchmark claims.
+Benchmarks must state hardware, durability mode, cache size, compression, dataset shape, concurrency, and correctness level. Praxis should beat class-specific engines only on comparable workloads, not by mixing incompatible benchmark claims.
 
 ## Memory Architecture
 
@@ -363,7 +363,7 @@ Production storage paths must use `slog` only.
 
 - No query planner in the kernel.
 - No SQL parser in the storage layer.
-- No distributed coordinator in Trident.
+- No distributed coordinator in Praxis.
 - No duplicated full-value secondary indexes by default.
 - No blocking global locks on normal paths.
 - No hidden memory ownership.
@@ -372,7 +372,7 @@ Production storage paths must use `slog` only.
 
 ## North Star
 
-Trident should evolve toward:
+Praxis should evolve toward:
 
 - RocksDB durability and LSM maturity.
 - ScyllaDB sharding and scheduling discipline.

@@ -1,7 +1,10 @@
 [package]
-name = "trident"
-version = "0.1.0"
+name = "praxis"
+version = "0.0.1"
 edition = "2024"
+authors = ["NeerajCodz <neerajcodz@gmail.com>"]
+description = "Primitive-first universal storage kernel for Poiesis"
+license = "Apache-2.0"
 
 [dependencies]
 blake3 = "1.5"

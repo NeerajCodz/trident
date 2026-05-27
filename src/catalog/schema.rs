@@ -1,12 +1,13 @@
 use crate::document::Record;
-use crate::errors::{Result, TridentError};
+use crate::errors::{PraxisError, Result};
 use crate::query::AlterAction;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub enum DistanceMetric {
+    #[default]
     Cosine,
     Dot,
     Euclidean,
@@ -26,7 +27,7 @@ impl Catalog {
 
     pub fn create_collection(&mut self, schema: CollectionSchema) -> Result<()> {
         if self.collections.contains_key(&schema.name) {
-            return Err(TridentError::Catalog(format!(
+            return Err(PraxisError::Catalog(format!(
                 "collection '{}' already exists",
                 schema.name
             )));
@@ -38,27 +39,23 @@ impl Catalog {
     pub fn collection(&self, name: &str) -> Result<&CollectionSchema> {
         self.collections
             .get(name)
-            .ok_or_else(|| TridentError::Catalog(format!("collection '{name}' not found")))
+            .ok_or_else(|| PraxisError::Catalog(format!("collection '{name}' not found")))
     }
 
     pub fn drop_collection(&mut self, name: &str) -> Result<()> {
         if self.collections.remove(name).is_none() {
-            return Err(TridentError::Catalog(format!(
+            return Err(PraxisError::Catalog(format!(
                 "collection '{name}' not found"
             )));
         }
         Ok(())
     }
 
-    pub fn alter_collection(
-        &mut self,
-        name: &str,
-        actions: &[AlterAction],
-    ) -> Result<()> {
+    pub fn alter_collection(&mut self, name: &str, actions: &[AlterAction]) -> Result<()> {
         let schema = self
             .collections
             .get_mut(name)
-            .ok_or_else(|| TridentError::Catalog(format!("collection '{name}' not found")))?;
+            .ok_or_else(|| PraxisError::Catalog(format!("collection '{name}' not found")))?;
         for action in actions {
             match action {
                 AlterAction::AddAttribute {
@@ -136,9 +133,18 @@ pub struct SchemaVersion {
 /// A single schema change in a migration.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum SchemaChange {
-    AddAttribute { name: String, type_name: String, nullable: bool },
-    DropAttribute { name: String },
-    AlterAttribute { name: String, changes: String },
+    AddAttribute {
+        name: String,
+        type_name: String,
+        nullable: bool,
+    },
+    DropAttribute {
+        name: String,
+    },
+    AlterAttribute {
+        name: String,
+        changes: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -200,28 +206,34 @@ impl CollectionSchema {
                 AttributeType::Vector(options) => {
                     if let Some(vector) = record.vectors.get(&attribute.name) {
                         if options.enabled && vector.len() != options.dimensions {
-                            return Err(TridentError::Catalog(format!(
+                            return Err(PraxisError::Catalog(format!(
                                 "vector '{}' expected {} dimensions but got {}",
-                                attribute.name, options.dimensions, vector.len()
+                                attribute.name,
+                                options.dimensions,
+                                vector.len()
                             )));
                         }
                     } else if !attribute.nullable {
-                        return Err(TridentError::Catalog(format!(
-                            "required vector '{}' missing", attribute.name
+                        return Err(PraxisError::Catalog(format!(
+                            "required vector '{}' missing",
+                            attribute.name
                         )));
                     }
                 }
                 AttributeType::Embedding(options) => {
                     if let Some(vector) = record.vectors.get(&attribute.name) {
                         if options.enabled && vector.len() != options.dimensions {
-                            return Err(TridentError::Catalog(format!(
+                            return Err(PraxisError::Catalog(format!(
                                 "embedding '{}' expected {} dimensions but got {}",
-                                attribute.name, options.dimensions, vector.len()
+                                attribute.name,
+                                options.dimensions,
+                                vector.len()
                             )));
                         }
                     } else if !attribute.nullable {
-                        return Err(TridentError::Catalog(format!(
-                            "required embedding '{}' missing", attribute.name
+                        return Err(PraxisError::Catalog(format!(
+                            "required embedding '{}' missing",
+                            attribute.name
                         )));
                     }
                 }
@@ -230,13 +242,15 @@ impl CollectionSchema {
                         if attribute.nullable {
                             continue;
                         }
-                        return Err(TridentError::Catalog(format!(
-                            "required attribute '{}' missing", attribute.name
+                        return Err(PraxisError::Catalog(format!(
+                            "required attribute '{}' missing",
+                            attribute.name
                         )));
                     };
                     if !attribute_type.accepts_json(value) {
-                        return Err(TridentError::Catalog(format!(
-                            "attribute '{}' does not match {:?}", attribute.name, attribute_type
+                        return Err(PraxisError::Catalog(format!(
+                            "attribute '{}' does not match {:?}",
+                            attribute.name, attribute_type
                         )));
                     }
                 }
@@ -247,7 +261,7 @@ impl CollectionSchema {
         if self.mode == SchemaMode::Strict {
             for key in record.attributes.keys() {
                 if !self.attributes.contains_key(key) && !self.computed_fields.contains_key(key) {
-                    return Err(TridentError::Catalog(format!(
+                    return Err(PraxisError::Catalog(format!(
                         "strict mode: unknown attribute '{}' on collection '{}'",
                         key, self.name
                     )));
@@ -310,7 +324,8 @@ fn evaluate_expression(expr: &str, record: &Record) -> Option<Value> {
                     "+" => l + r,
                     "-" => l - r,
                     "*" => l * r,
-                    "/" => if r != 0.0 { l / r } else { 0.0 },
+                    "/" if r != 0.0 => l / r,
+                    "/" => 0.0,
                     _ => 0.0,
                 };
                 return Some(Value::from(result));
@@ -651,9 +666,9 @@ pub enum EmbeddingProvider {
 
 fn default_local_embedding_model(dimensions: usize) -> &'static str {
     match dimensions {
-        0..=384 => "trident-local-minilm-l6-v2",
-        385..=768 => "trident-local-e5-base-v2",
-        _ => "trident-local-bge-large-en-v1.5",
+        0..=384 => "praxis-local-minilm-l6-v2",
+        385..=768 => "praxis-local-e5-base-v2",
+        _ => "praxis-local-bge-large-en-v1.5",
     }
 }
 

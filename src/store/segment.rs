@@ -1,4 +1,4 @@
-use crate::errors::{Result, TridentError};
+use crate::errors::{PraxisError, Result};
 use crc32fast::Hasher as Crc32Hasher;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -19,7 +19,7 @@ const RECORD_HEADER_SIZE: u64 = 8;
 /// ```
 ///
 /// All reads are done by seeking to an absolute byte offset; the segment
-/// never needs to be scanned because the [`IndirectionTable`] records the
+/// never needs to be scanned because the [`IndirectionTable`](super::IndirectionTable) records the
 /// exact offset and length of every record.
 pub struct RecordSegment {
     segment_id: u32,
@@ -107,7 +107,7 @@ impl RecordSegment {
 
         let actual = crc32(&data);
         if actual != expected_checksum {
-            return Err(TridentError::Corrupt {
+            return Err(PraxisError::Corrupt {
                 path: path.to_path_buf(),
                 reason: format!(
                     "record checksum mismatch at offset {record_offset}: \

@@ -1,4 +1,4 @@
-use crate::errors::{Result, TridentError};
+use crate::errors::{PraxisError, Result};
 use crate::index::IndexStorageLayout;
 use std::path::{Path, PathBuf};
 
@@ -50,19 +50,19 @@ pub struct DurableFormatDescriptor {
 impl DurableFormatDescriptor {
     pub fn validate(&self) -> Result<()> {
         if self.format_version == 0 {
-            return Err(TridentError::InvalidConfig(format!(
+            return Err(PraxisError::InvalidConfig(format!(
                 "{} has no durable format version",
                 self.structure
             )));
         }
         if self.checksum.is_empty() {
-            return Err(TridentError::InvalidConfig(format!(
+            return Err(PraxisError::InvalidConfig(format!(
                 "{} has no durable checksum",
                 self.structure
             )));
         }
         if !self.independently_recoverable {
-            return Err(TridentError::InvalidConfig(format!(
+            return Err(PraxisError::InvalidConfig(format!(
                 "{} is not independently recoverable",
                 self.structure
             )));
@@ -123,7 +123,7 @@ pub trait RecoverableStructure {
     fn validate_recovery_contract(&self) -> Result<()> {
         self.durable_format().validate()?;
         if self.manifest_path().as_os_str().is_empty() {
-            return Err(TridentError::InvalidConfig(
+            return Err(PraxisError::InvalidConfig(
                 "recoverable structure has no manifest path".to_string(),
             ));
         }
@@ -166,12 +166,12 @@ impl DurableArtifactDescriptor {
     pub fn validate(&self) -> Result<()> {
         self.format.validate()?;
         if self.logical_name.is_empty() {
-            return Err(TridentError::InvalidConfig(
+            return Err(PraxisError::InvalidConfig(
                 "durable artifact has no logical name".to_string(),
             ));
         }
         if self.path.as_os_str().is_empty() {
-            return Err(TridentError::InvalidConfig(format!(
+            return Err(PraxisError::InvalidConfig(format!(
                 "durable artifact {} has no manifest path",
                 self.logical_name
             )));
@@ -207,12 +207,12 @@ impl KernelInvariantValidator {
         metrics: StorageOperationMetrics,
     ) -> Result<KernelInvariantReport> {
         if visibility_applied && !wal_durable {
-            return Err(TridentError::InvalidConfig(
+            return Err(PraxisError::InvalidConfig(
                 "write visibility cannot precede WAL durability".to_string(),
             ));
         }
         if metrics.latency_us == 0 && metrics.bytes_written == 0 && metrics.io_ops == 0 {
-            return Err(TridentError::InvalidConfig(
+            return Err(PraxisError::InvalidConfig(
                 "storage write completed without measurable operation metrics".to_string(),
             ));
         }
@@ -261,7 +261,7 @@ impl KernelInvariantValidator {
             "tier_migration_cleanup",
         ];
         if steps != EXPECTED {
-            return Err(TridentError::InvalidConfig(format!(
+            return Err(PraxisError::InvalidConfig(format!(
                 "recovery plan must be deterministic and ordered as {}",
                 EXPECTED.join(" -> ")
             )));

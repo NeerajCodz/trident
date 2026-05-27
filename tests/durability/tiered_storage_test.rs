@@ -1,9 +1,9 @@
-use trident::config::Compression;
-use trident::storage::{
+use praxis::config::Compression;
+use praxis::storage::{
     ObjectStoreLocator, StorageTier, TierHeatSample, TierMigrationManifest, TierMigrationRequest,
     TierMigrationStatus, TieredStoragePolicy,
 };
-use trident::store::RecordId;
+use praxis::store::RecordId;
 
 #[test]
 fn tiered_policy_places_data_by_heat_score() {

@@ -1,4 +1,4 @@
-use trident::io::{HardwareBackend, HardwareIoProfile, HardwareOperation};
+use praxis::io::{HardwareBackend, HardwareIoProfile, HardwareOperation};
 
 #[test]
 fn hardware_io_profile_declares_portable_cpu_fallbacks() {

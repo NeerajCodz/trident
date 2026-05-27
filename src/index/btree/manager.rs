@@ -1,5 +1,5 @@
 use super::page::{BTreePage, BTreePageId};
-use crate::errors::{Result, TridentError};
+use crate::errors::{PraxisError, Result};
 use crate::store::RecordId;
 use std::collections::BTreeMap;
 
@@ -45,13 +45,13 @@ impl BTreePageManager {
     }
 
     pub fn page(&self, page_id: BTreePageId) -> Result<&BTreePage> {
-        self.pages.get(&page_id.0).ok_or(TridentError::KeyNotFound)
+        self.pages.get(&page_id.0).ok_or(PraxisError::KeyNotFound)
     }
 
     pub fn page_mut(&mut self, page_id: BTreePageId) -> Result<&mut BTreePage> {
         self.pages
             .get_mut(&page_id.0)
-            .ok_or(TridentError::KeyNotFound)
+            .ok_or(PraxisError::KeyNotFound)
     }
 
     pub fn page_count(&self) -> usize {
@@ -62,7 +62,7 @@ impl BTreePageManager {
         let original = self.page(page_id)?.clone();
         let midpoint = original.entries().len() / 2;
         if midpoint == 0 {
-            return Err(TridentError::InvalidConfig(
+            return Err(PraxisError::InvalidConfig(
                 "cannot split an empty B-tree page".to_string(),
             ));
         }

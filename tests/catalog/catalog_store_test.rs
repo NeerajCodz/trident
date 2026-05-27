@@ -1,12 +1,12 @@
-use tempfile::tempdir;
-use trident::catalog::{
+use praxis::catalog::{
     CatalogSnapshot, CatalogStore, CollectionCatalogEntry, DynamicAttributeCatalogEntry,
     EntityCatalogEntry, EntityStorageModel, FixedAttributeCatalogEntry, FullTextCatalogEntry,
     GraphCatalogEntry, IndexCatalogEntry, ShardCatalogEntry, UserCatalogEntry,
     VectorModelCatalogEntry,
 };
-use trident::config::Compression;
-use trident::identity::{Aid, Cid, Did, Eid};
+use praxis::config::Compression;
+use praxis::identity::{Aid, Cid, Did, Eid};
+use tempfile::tempdir;
 
 #[test]
 fn catalog_store_loads_empty_doc_shape_catalog_files() {

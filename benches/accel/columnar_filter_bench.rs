@@ -1,5 +1,5 @@
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
-use trident::accel::{Accelerator, CpuAccelerator};
+use praxis::accel::{Accelerator, CpuAccelerator};
 
 fn bench_columnar_filter(c: &mut Criterion) {
     let accel = CpuAccelerator;

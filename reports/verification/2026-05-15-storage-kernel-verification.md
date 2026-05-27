@@ -1,4 +1,4 @@
-# Trident Storage Kernel Verification Report
+# Praxis Storage Kernel Verification Report
 
 Date: 2026-05-15
 

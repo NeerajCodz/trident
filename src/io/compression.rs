@@ -17,7 +17,7 @@ pub fn decode_block(codec: Compression, bytes: &[u8]) -> Result<Vec<u8>> {
     }
 }
 
-impl From<lz4_flex::block::DecompressError> for crate::errors::TridentError {
+impl From<lz4_flex::block::DecompressError> for crate::errors::PraxisError {
     fn from(value: lz4_flex::block::DecompressError) -> Self {
         Self::InvalidConfig(format!("lz4 decompression failed: {value}"))
     }

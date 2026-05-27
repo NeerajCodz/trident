@@ -1,5 +1,5 @@
-use trident::cli;
-use trident::slog;
+use praxis::cli;
+use praxis::slog;
 
 fn main() {
     if let Err(error) = cli::run() {

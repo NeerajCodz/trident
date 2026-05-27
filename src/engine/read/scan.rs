@@ -1,11 +1,11 @@
 use bytes::Bytes;
 use std::collections::BTreeMap;
 
-use crate::engine::core::engine::TridentEngine;
+use crate::engine::core::engine::PraxisEngine;
 use crate::errors::Result;
 use crate::types::{ColumnFamily, Key, ReadSnapshot, Value};
 
-impl TridentEngine {
+impl PraxisEngine {
     pub fn scan(
         &self,
         start: Option<&[u8]>,
@@ -70,12 +70,17 @@ impl TridentEngine {
         for (key, value) in self
             .inner
             .memtable
-            .lock()
+            .read()
             .scan(cf, start, end, snapshot.sequence)
         {
             rows.insert(key, value);
         }
-        for ((entry_cf, key), versions) in self.inner.segment_index.lock().iter() {
+        for imm in self.inner.immutable_memtables.lock().iter() {
+            for (key, value) in imm.scan(cf, start, end, snapshot.sequence) {
+                rows.entry(key).or_insert(value);
+            }
+        }
+        for ((entry_cf, key), versions) in self.inner.segment_index.read().iter() {
             if entry_cf != cf {
                 continue;
             }

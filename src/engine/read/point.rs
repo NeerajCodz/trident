@@ -1,12 +1,12 @@
 use bytes::Bytes;
 
-use crate::engine::core::engine::TridentEngine;
+use crate::engine::core::engine::PraxisEngine;
 use crate::errors::Result;
 use crate::segments::bloom::bloom_key;
 use crate::types::{ColumnFamily, ReadSnapshot, Value, ValueRef};
 use std::sync::atomic::Ordering;
 
-impl TridentEngine {
+impl PraxisEngine {
     pub fn get(&self, key: impl AsRef<[u8]>) -> Result<Option<Value>> {
         self.get_cf(&ColumnFamily::default(), key.as_ref(), self.snapshot())
     }

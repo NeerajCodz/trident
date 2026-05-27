@@ -1,4 +1,4 @@
-use crate::errors::{Result, TridentError};
+use crate::errors::{PraxisError, Result};
 use crate::io::{BinaryReader, BinaryWriter, crc32c};
 use crate::store::RecordId;
 use std::collections::BTreeSet;
@@ -264,7 +264,7 @@ impl SstableReader {
         let block = self
             .index
             .get(block_index)
-            .ok_or(TridentError::KeyNotFound)?;
+            .ok_or(PraxisError::KeyNotFound)?;
         let start = block.offset as usize;
         let end = start.saturating_add(block.len as usize);
         if start < HEADER_LEN || end > self.bytes.len() {
@@ -496,7 +496,7 @@ fn block_position(
         .position(|entry| {
             entry.offset == target.offset && entry.len == target.len && entry.crc32 == target.crc32
         })
-        .ok_or(TridentError::KeyNotFound)
+        .ok_or(PraxisError::KeyNotFound)
 }
 
 fn common_prefix_len(left: &[u8], right: &[u8]) -> usize {
@@ -619,7 +619,7 @@ fn empty_to_none(bytes: Vec<u8>) -> Option<Vec<u8>> {
 }
 
 fn corrupt<T>(path: &Path, reason: &str) -> Result<T> {
-    Err(TridentError::Corrupt {
+    Err(PraxisError::Corrupt {
         path: path.to_path_buf(),
         reason: reason.to_string(),
     })

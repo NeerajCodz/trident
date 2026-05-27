@@ -1,9 +1,9 @@
-use tempfile::tempdir;
-use trident::replication::{
+use praxis::replication::{
     FileReplicationLog, LogPosition, ReplicationLog, ReplicationRecord, ReplicationRecordKind,
     SnapshotTransferRecord,
 };
-use trident::store::RecordId;
+use praxis::store::RecordId;
+use tempfile::tempdir;
 
 #[test]
 fn file_replication_log_replays_from_position() {

@@ -1,4 +1,4 @@
-//! Index implementations for Trident storage engine
+//! Index implementations for praxis storage engine
 //!
 //! Every index plugin stores only `key → RecordId` mappings.  The actual
 //! value bytes live in the primary [`RecordStore`][crate::store::RecordStore]

@@ -149,4 +149,15 @@ impl MemTable {
         self.entries.clear();
         self.approximate_bytes = 0;
     }
+
+    /// Remove all entries belonging to the given column family.
+    pub fn remove_cf(&mut self, cf: &ColumnFamily) {
+        let before = self.entries.len();
+        self.entries.retain(|(k_cf, _), _| k_cf != cf);
+        let removed = before - self.entries.len();
+        // Approximate recalculation — better than leaving stale bytes
+        if removed > 0 {
+            self.approximate_bytes = self.approximate_bytes.saturating_sub(removed * 64); // rough estimate
+        }
+    }
 }

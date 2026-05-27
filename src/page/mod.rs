@@ -1,4 +1,4 @@
-use crate::errors::{Result, TridentError};
+use crate::errors::{PraxisError, Result};
 use crate::identity::Sid;
 use crate::io::{BinaryReader, BinaryWriter, crc32c};
 use serde::{Deserialize, Serialize};
@@ -64,7 +64,7 @@ impl RecordPage {
 
     pub fn insert(&mut self, sid: Sid, bytes: &[u8]) -> Result<()> {
         if sid.is_null() {
-            return Err(TridentError::InvalidConfig(
+            return Err(PraxisError::InvalidConfig(
                 "SID 0000 is reserved and cannot store a record slot".to_string(),
             ));
         }
@@ -73,7 +73,7 @@ impl RecordPage {
             .iter()
             .any(|slot| slot.sid == sid && !slot.tombstone)
         {
-            return Err(TridentError::InvalidConfig(format!(
+            return Err(PraxisError::InvalidConfig(format!(
                 "duplicate live slot {sid}"
             )));
         }
@@ -81,7 +81,7 @@ impl RecordPage {
         let projected_slots = self.slots.len().saturating_add(1);
         let required = projected_payload.saturating_add(projected_slots.saturating_mul(16));
         if required > self.header.page_size as usize {
-            return Err(TridentError::WriteStalled {
+            return Err(PraxisError::WriteStalled {
                 reason: "record page has insufficient free space".to_string(),
             });
         }
@@ -109,7 +109,7 @@ impl RecordPage {
         let start = slot.offset as usize;
         let end = start.saturating_add(slot.len as usize);
         if end > self.payload.len() {
-            return Err(TridentError::Corrupt {
+            return Err(PraxisError::Corrupt {
                 path: PathBuf::from("record-page"),
                 reason: "slot points outside page payload".to_string(),
             });
@@ -122,7 +122,7 @@ impl RecordPage {
             .slots
             .iter_mut()
             .find(|slot| slot.sid == sid && !slot.tombstone)
-            .ok_or(TridentError::KeyNotFound)?;
+            .ok_or(PraxisError::KeyNotFound)?;
         slot.tombstone = true;
         self.refresh_header();
         Ok(())
@@ -262,7 +262,7 @@ fn tag_to_kind(tag: u8, source: &Path) -> Result<PageKind> {
 }
 
 fn corrupt<T>(path: &Path, reason: &str) -> Result<T> {
-    Err(TridentError::Corrupt {
+    Err(PraxisError::Corrupt {
         path: path.to_path_buf(),
         reason: reason.to_string(),
     })

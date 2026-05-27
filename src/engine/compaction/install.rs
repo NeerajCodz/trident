@@ -1,1 +1,1 @@
-// Compaction install protocol remains implemented on TridentEngine in core::engine.
+// Compaction install protocol remains implemented on PraxisEngine in core::engine.

@@ -1,5 +1,5 @@
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
-use trident::accel::{Accelerator, CpuAccelerator};
+use praxis::accel::{Accelerator, CpuAccelerator};
 
 fn bench_cpu_crc32c(c: &mut Criterion) {
     let accel = CpuAccelerator;

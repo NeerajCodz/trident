@@ -1,5 +1,5 @@
 use super::RecordId;
-use crate::errors::{Result, TridentError};
+use crate::errors::{PraxisError, Result};
 use crc32fast::Hasher as Crc32Hasher;
 use serde::{Deserialize, Serialize};
 use std::fs::{File, OpenOptions};
@@ -219,13 +219,13 @@ fn replay_file(path: &Path) -> Result<Vec<StorageWalEntry>> {
     }
     let magic = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
     if magic != STORAGE_WAL_MAGIC {
-        return Err(TridentError::Corrupt {
+        return Err(PraxisError::Corrupt {
             path: path.to_path_buf(),
             reason: "bad storage WAL magic".to_string(),
         });
     }
     if bytes[4] != STORAGE_WAL_VERSION {
-        return Err(TridentError::Corrupt {
+        return Err(PraxisError::Corrupt {
             path: path.to_path_buf(),
             reason: format!("unsupported storage WAL version {}", bytes[4]),
         });
@@ -280,12 +280,12 @@ fn encode_record(entry: &StorageWalEntry) -> Result<Vec<u8>> {
 
 fn encode_payload(entry: &StorageWalEntry) -> Result<Vec<u8>> {
     if entry.index_type.len() > u16::MAX as usize {
-        return Err(TridentError::InvalidConfig(
+        return Err(PraxisError::InvalidConfig(
             "storage WAL index type exceeds binary payload limit".to_string(),
         ));
     }
     if entry.key.len() > u32::MAX as usize {
-        return Err(TridentError::InvalidConfig(
+        return Err(PraxisError::InvalidConfig(
             "storage WAL key exceeds binary payload limit".to_string(),
         ));
     }
@@ -324,7 +324,7 @@ fn decode_payload(payload: &[u8]) -> Result<StorageWalEntry> {
         return Ok(serde_json::from_slice(payload)?);
     }
     if payload[4] != STORAGE_WAL_PAYLOAD_VERSION {
-        return Err(TridentError::Corrupt {
+        return Err(PraxisError::Corrupt {
             path: PathBuf::from("<storage-wal-payload>"),
             reason: format!("unsupported storage WAL payload version {}", payload[4]),
         });
@@ -336,7 +336,7 @@ fn decode_payload(payload: &[u8]) -> Result<StorageWalEntry> {
         1 => StorageWalOperation::Put,
         2 => StorageWalOperation::Delete,
         code => {
-            return Err(TridentError::Corrupt {
+            return Err(PraxisError::Corrupt {
                 path: PathBuf::from("<storage-wal-payload>"),
                 reason: format!("unknown storage WAL operation code {code}"),
             });
@@ -429,8 +429,8 @@ fn read_u64(payload: &[u8], cursor: &mut usize) -> Result<u64> {
     ))
 }
 
-fn payload_corrupt(reason: impl Into<String>) -> TridentError {
-    TridentError::Corrupt {
+fn payload_corrupt(reason: impl Into<String>) -> PraxisError {
+    PraxisError::Corrupt {
         path: PathBuf::from("<storage-wal-payload>"),
         reason: reason.into(),
     }

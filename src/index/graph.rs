@@ -1,5 +1,5 @@
-use crate::errors::{Result, TridentError};
 use crate::document::RecordId;
+use crate::errors::{PraxisError, Result};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 #[derive(Debug, Clone, Default)]
@@ -10,6 +10,14 @@ pub struct GraphIndex {
 impl GraphIndex {
     pub fn add_edge(&mut self, source: RecordId, target: RecordId) {
         self.adjacency.entry(source).or_default().push(target);
+    }
+
+    /// Remove a record and all edges referencing it (both outbound and inbound).
+    pub fn remove_record(&mut self, id: &RecordId) {
+        self.adjacency.remove(id);
+        for neighbors in self.adjacency.values_mut() {
+            neighbors.retain(|n| n != id);
+        }
     }
 
     pub fn bfs(&self, start: &RecordId, max_hops: usize) -> Vec<RecordId> {
@@ -31,11 +39,7 @@ impl GraphIndex {
         output
     }
 
-    pub fn shortest_path(
-        &self,
-        start: &RecordId,
-        target: &RecordId,
-    ) -> Result<Vec<RecordId>> {
+    pub fn shortest_path(&self, start: &RecordId, target: &RecordId) -> Result<Vec<RecordId>> {
         let mut queue = VecDeque::from([(start.clone(), vec![start.clone()])]);
         let mut seen = BTreeSet::new();
         while let Some((node, path)) = queue.pop_front() {
@@ -51,6 +55,6 @@ impl GraphIndex {
                 queue.push_back((next, next_path));
             }
         }
-        Err(TridentError::Query("path not found".into()))
+        Err(PraxisError::Query("path not found".into()))
     }
 }

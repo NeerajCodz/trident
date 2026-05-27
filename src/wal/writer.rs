@@ -1,5 +1,5 @@
 use crate::config::WalSyncPolicy;
-use crate::errors::{Result, TridentError};
+use crate::errors::{PraxisError, Result};
 use crate::io::BinaryWriter;
 use crate::wal::record::{WAL_RECORD_HEADER_LEN, WalRecord};
 use std::fs::{File, OpenOptions};
@@ -151,14 +151,14 @@ fn file_payload_offset(bytes: &[u8], path: &Path) -> Result<usize> {
         return Ok(0);
     }
     if bytes.len() < WAL_FILE_HEADER_LEN {
-        return Err(TridentError::Corrupt {
+        return Err(PraxisError::Corrupt {
             path: path.to_path_buf(),
             reason: "torn WAL file header".to_string(),
         });
     }
     let version = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
     if version != WAL_FILE_VERSION {
-        return Err(TridentError::Corrupt {
+        return Err(PraxisError::Corrupt {
             path: path.to_path_buf(),
             reason: format!("unsupported WAL file version {version}"),
         });

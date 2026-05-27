@@ -1,5 +1,5 @@
+use praxis::store::RecordStore;
 use tempfile::tempdir;
-use trident::store::RecordStore;
 
 #[test]
 fn record_store_write_and_read() {

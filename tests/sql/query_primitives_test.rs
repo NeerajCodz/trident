@@ -1,6 +1,6 @@
-use trident::kernel::ExecutionMode;
-use trident::query::sql::{SqlIndexKind, SqlIndexSpec};
-use trident::query::{QueryModel, plan};
+use praxis::kernel::ExecutionMode;
+use praxis::query::sql::{SqlIndexKind, SqlIndexSpec};
+use praxis::query::{QueryModel, plan};
 
 #[test]
 fn sql_plans_to_btree_specialized_path() {

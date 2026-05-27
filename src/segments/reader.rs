@@ -1,6 +1,6 @@
 use crate::accel::Accelerator;
 use crate::config::Compression;
-use crate::errors::{Result, TridentError};
+use crate::errors::{PraxisError, Result};
 use crate::io::{BinaryReader, crc32c, read_file_with_policy};
 use crate::segments::block::SegmentEntry;
 use crate::segments::format::{
@@ -23,14 +23,14 @@ impl SegmentReader {
         let mut reader = BinaryReader::new(&bytes, path);
         let magic = reader.read_u32()?;
         if magic != SEGMENT_MAGIC {
-            return Err(TridentError::Corrupt {
+            return Err(PraxisError::Corrupt {
                 path: path.to_path_buf(),
                 reason: "bad segment magic".to_string(),
             });
         }
         let version = reader.read_u32()?;
         if version != SEGMENT_VERSION {
-            return Err(TridentError::Corrupt {
+            return Err(PraxisError::Corrupt {
                 path: path.to_path_buf(),
                 reason: format!("unsupported segment version {version}"),
             });
@@ -40,7 +40,7 @@ impl SegmentReader {
             1 => Compression::Lz4,
             2 => Compression::Zstd,
             tag => {
-                return Err(TridentError::Corrupt {
+                return Err(PraxisError::Corrupt {
                     path: path.to_path_buf(),
                     reason: format!("unknown segment compression tag {tag}"),
                 });
@@ -54,7 +54,7 @@ impl SegmentReader {
             let start = block.offset as usize;
             let end = start + block.len as usize;
             if start < SEGMENT_HEADER_LEN || end > bytes.len() - SEGMENT_FOOTER_TRAILER_LEN {
-                return Err(TridentError::Corrupt {
+                return Err(PraxisError::Corrupt {
                     path: path.to_path_buf(),
                     reason: "segment block offset out of bounds".to_string(),
                 });
@@ -72,7 +72,7 @@ impl SegmentReader {
 
 fn read_footer(bytes: &[u8], path: &Path) -> Result<Vec<BlockIndexEntry>> {
     if bytes.len() < SEGMENT_HEADER_LEN + SEGMENT_FOOTER_TRAILER_LEN {
-        return Err(TridentError::Corrupt {
+        return Err(PraxisError::Corrupt {
             path: path.to_path_buf(),
             reason: "segment too small".to_string(),
         });
@@ -82,7 +82,7 @@ fn read_footer(bytes: &[u8], path: &Path) -> Result<Vec<BlockIndexEntry>> {
     let checksum = u32::from_le_bytes([trailer[4], trailer[5], trailer[6], trailer[7]]);
     let magic = u32::from_le_bytes([trailer[8], trailer[9], trailer[10], trailer[11]]);
     if magic != SEGMENT_FOOTER_MAGIC {
-        return Err(TridentError::Corrupt {
+        return Err(PraxisError::Corrupt {
             path: path.to_path_buf(),
             reason: "bad segment footer magic".to_string(),
         });
@@ -90,13 +90,13 @@ fn read_footer(bytes: &[u8], path: &Path) -> Result<Vec<BlockIndexEntry>> {
     let footer_start = bytes
         .len()
         .checked_sub(SEGMENT_FOOTER_TRAILER_LEN + footer_len)
-        .ok_or_else(|| TridentError::Corrupt {
+        .ok_or_else(|| PraxisError::Corrupt {
             path: path.to_path_buf(),
             reason: "segment footer out of bounds".to_string(),
         })?;
     let footer = &bytes[footer_start..footer_start + footer_len];
     if crc32c(footer) != checksum {
-        return Err(TridentError::Corrupt {
+        return Err(PraxisError::Corrupt {
             path: path.to_path_buf(),
             reason: "segment footer checksum mismatch".to_string(),
         });
@@ -126,14 +126,14 @@ fn read_block(
     let _uncompressed_len = reader.read_u32()?;
     let expected = reader.read_u32()?;
     if bytes.len() < 12 + compressed_len {
-        return Err(TridentError::Corrupt {
+        return Err(PraxisError::Corrupt {
             path: path.to_path_buf(),
             reason: "segment block length out of bounds".to_string(),
         });
     }
     let compressed = &bytes[12..12 + compressed_len];
     if crc32c(compressed) != expected {
-        return Err(TridentError::Corrupt {
+        return Err(PraxisError::Corrupt {
             path: path.to_path_buf(),
             reason: "segment block checksum mismatch".to_string(),
         });
@@ -192,7 +192,7 @@ fn decode_block_entries(payload: &[u8], path: &Path) -> Result<Vec<SegmentEntry>
             }
             6 => StoredValue::Merge(payload_reader.read_len_bytes()?),
             tag => {
-                return Err(TridentError::Corrupt {
+                return Err(PraxisError::Corrupt {
                     path: PathBuf::from("segment-payload"),
                     reason: format!("unknown segment value tag {tag}"),
                 });

@@ -7,7 +7,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Trait for providing records to the executor.
-/// Implementors wrap any storage engine (Trident's KV store, Poiesis's engine, etc.)
+/// Implementors wrap any storage engine (praxis's KV store, Poiesis's engine, etc.)
 pub trait RecordProvider {
     /// Get all records in a collection.
     fn collection(&self, name: &str) -> Vec<Record>;
@@ -257,8 +257,10 @@ fn execute_join<P: RecordProvider>(
             if joined.is_empty() {
                 None
             } else {
-                left.attributes
-                    .insert(format!("join.{}", join.collection), serde_json::json!(joined));
+                left.attributes.insert(
+                    format!("join.{}", join.collection),
+                    serde_json::json!(joined),
+                );
                 Some(left)
             }
         })
@@ -314,44 +316,39 @@ fn rank_records(mut records: Vec<Record>, rank_expr: &str) -> Vec<Record> {
         records.sort_by(|a, b| {
             let score_a = text_relevance_score(a);
             let score_b = text_relevance_score(b);
-            score_b
-                .partial_cmp(&score_a)
-                .unwrap_or(Ordering::Equal)
+            score_b.partial_cmp(&score_a).unwrap_or(Ordering::Equal)
         });
         return records;
     }
 
-    if lower.contains("vector") || lower.contains("similarity") {
-        if let Some(first) = records.first() {
-            if let Some((attr, query_vec)) = first.vectors.iter().next() {
-                let query = query_vec.clone();
-                let attr_name = attr.clone();
-                records.sort_by(|a, b| {
-                    let score_a = a
-                        .vectors
-                        .get(&attr_name)
-                        .map(|v| cosine_similarity(&query, v))
-                        .unwrap_or(0.0);
-                    let score_b = b
-                        .vectors
-                        .get(&attr_name)
-                        .map(|v| cosine_similarity(&query, v))
-                        .unwrap_or(0.0);
-                    score_b
-                        .partial_cmp(&score_a)
-                        .unwrap_or(Ordering::Equal)
-                });
-                return records;
-            }
-        }
-    }
-
-    if lower.contains("graph") || lower.contains("connectivity") {
-        records.sort_by(|a, b| b.edges.len().cmp(&a.edges.len()));
+    if (lower.contains("vector") || lower.contains("similarity"))
+        && let Some(first) = records.first()
+        && let Some((attr, query_vec)) = first.vectors.iter().next()
+    {
+        let query = query_vec.clone();
+        let attr_name = attr.clone();
+        records.sort_by(|a, b| {
+            let score_a = a
+                .vectors
+                .get(&attr_name)
+                .map(|v| cosine_similarity(&query, v))
+                .unwrap_or(0.0);
+            let score_b = b
+                .vectors
+                .get(&attr_name)
+                .map(|v| cosine_similarity(&query, v))
+                .unwrap_or(0.0);
+            score_b.partial_cmp(&score_a).unwrap_or(Ordering::Equal)
+        });
         return records;
     }
 
-    records.sort_by(|a, b| b.updated_at_ms.cmp(&a.updated_at_ms));
+    if lower.contains("graph") || lower.contains("connectivity") {
+        records.sort_by_key(|b| std::cmp::Reverse(b.edges.len()));
+        return records;
+    }
+
+    records.sort_by_key(|b| std::cmp::Reverse(b.updated_at_ms));
     records
 }
 
@@ -430,8 +427,6 @@ fn execute_aggregate(records: Vec<Record>, expr: &AggregateExpr) -> Vec<Record> 
     };
 
     let mut record = Record::new("_aggregate", &expr.alias);
-    record
-        .attributes
-        .insert(expr.alias.clone(), result_value);
+    record.attributes.insert(expr.alias.clone(), result_value);
     vec![record]
 }

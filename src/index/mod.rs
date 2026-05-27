@@ -1,4 +1,4 @@
-//! Index plugins for Trident's no-duplication storage engine.
+//! Index plugins for praxis's no-duplication storage engine.
 //!
 //! Every index plugin stores only `key → RecordId` mappings.  The actual
 //! value bytes live in the primary [`RecordStore`][crate::store::RecordStore]
@@ -72,12 +72,12 @@ impl IndexStorageLayout {
 
     pub fn validate_default_kernel_policy(self, index_name: &str) -> Result<()> {
         if self.stores_full_values {
-            return Err(crate::errors::TridentError::InvalidConfig(format!(
+            return Err(crate::errors::PraxisError::InvalidConfig(format!(
                 "index {index_name} violates pointer-only kernel policy"
             )));
         }
         if !self.stores_record_ids {
-            return Err(crate::errors::TridentError::InvalidConfig(format!(
+            return Err(crate::errors::PraxisError::InvalidConfig(format!(
                 "index {index_name} must store RecordId pointers"
             )));
         }
@@ -136,7 +136,7 @@ pub trait IndexPlugin: Send + Sync {
         IndexStats::default()
     }
 
-    /// Durable storage layout declaration used to enforce Trident's
+    /// Durable storage layout declaration used to enforce praxis's
     /// single-copy value contract.
     fn storage_layout(&self) -> IndexStorageLayout {
         IndexStorageLayout::POINTER_ONLY

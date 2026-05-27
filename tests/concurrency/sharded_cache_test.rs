@@ -1,7 +1,7 @@
 use bytes::Bytes;
+use praxis::cache::ShardedBlockCache;
 use std::sync::Arc;
 use std::thread;
-use trident::cache::ShardedBlockCache;
 
 #[test]
 fn sharded_cache_tracks_hits_misses_and_evictions() {

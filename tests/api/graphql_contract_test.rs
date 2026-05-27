@@ -1,4 +1,4 @@
-use trident::api::graphql::{GraphQlPrimitive, STORAGE_GRAPHQL_SCHEMA};
+use praxis::api::graphql::{GraphQlPrimitive, STORAGE_GRAPHQL_SCHEMA};
 
 #[test]
 fn graphql_schema_exposes_storage_primitives() {

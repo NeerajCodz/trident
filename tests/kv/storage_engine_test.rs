@@ -1,21 +1,21 @@
-//! Tests for Trident's no-duplication storage engine.
+//! Tests for praxis's no-duplication storage engine.
 //!
 //! The central invariant under test: **every value payload is written to the
 //! primary [`RecordStore`] exactly once**.  All index plugins ([`LsmIndex`],
 //! [`BTreeIndex`], [`AdjacencyIndex`], [`HnswIndex`]) store only
 //! `key → RecordId` pointers and never duplicate the underlying bytes.
 
-use std::sync::Arc;
-use std::time::Duration;
-use tempfile::tempdir;
-use trident::index::{AdjacencyIndex, BTreeIndex, HnswIndex, IndexPlugin};
-use trident::storage::lsm::LsmIndex;
-use trident::store::{
+use praxis::index::{AdjacencyIndex, BTreeIndex, HnswIndex, IndexPlugin};
+use praxis::storage::lsm::LsmIndex;
+use praxis::store::{
     BatchRecord, DirectorySyncPolicy, IndexInsert, MaintenanceCycleOptions, RecordId, RecordStore,
     SharedStorageEngine, StorageEngine, StorageEngineOptions, StorageMaintenanceRuntimeConfig,
     StorageMaintenanceRuntimeController, StorageWal, StorageWalEntry, StorageWalOperation,
     StorageWalOptions,
 };
+use std::sync::Arc;
+use std::time::Duration;
+use tempfile::tempdir;
 
 // ──────────────────────────────────────────────
 // 1.  Single-copy guarantee across multiple indexes
@@ -71,7 +71,8 @@ fn three_index_types_two_data_records() {
     // Three different index types all point to alice's single record.
     lsm.put(b"alice", alice).unwrap();
     btree.put(b"030:alice", alice).unwrap(); // age 30
-    adj.add_edge(alice, b"friend", bob, std::collections::BTreeMap::new()).unwrap();
+    adj.add_edge(alice, b"friend", bob, std::collections::BTreeMap::new())
+        .unwrap();
 
     // Two live records total (alice + bob), not one per index entry.
     assert_eq!(store.live_count(), 2);
@@ -457,9 +458,12 @@ fn adjacency_add_and_query_edges() {
     let bob = store.put(b"bob").unwrap();
     let carol = store.put(b"carol").unwrap();
 
-    adj.add_edge(alice, b"follows", bob, std::collections::BTreeMap::new()).unwrap();
-    adj.add_edge(alice, b"follows", carol, std::collections::BTreeMap::new()).unwrap();
-    adj.add_edge(alice, b"blocks", bob, std::collections::BTreeMap::new()).unwrap();
+    adj.add_edge(alice, b"follows", bob, std::collections::BTreeMap::new())
+        .unwrap();
+    adj.add_edge(alice, b"follows", carol, std::collections::BTreeMap::new())
+        .unwrap();
+    adj.add_edge(alice, b"blocks", bob, std::collections::BTreeMap::new())
+        .unwrap();
 
     let follows = adj.neighbors_with_label(alice, b"follows");
     assert_eq!(follows.len(), 2);
@@ -482,9 +486,12 @@ fn adjacency_duplicate_edges_ignored() {
     let a = store.put(b"a").unwrap();
     let b = store.put(b"b").unwrap();
 
-    adj.add_edge(a, b"rel", b, std::collections::BTreeMap::new()).unwrap();
-    adj.add_edge(a, b"rel", b, std::collections::BTreeMap::new()).unwrap(); // duplicate – must be ignored
-    adj.add_edge(a, b"rel", b, std::collections::BTreeMap::new()).unwrap();
+    adj.add_edge(a, b"rel", b, std::collections::BTreeMap::new())
+        .unwrap();
+    adj.add_edge(a, b"rel", b, std::collections::BTreeMap::new())
+        .unwrap(); // duplicate – must be ignored
+    adj.add_edge(a, b"rel", b, std::collections::BTreeMap::new())
+        .unwrap();
 
     assert_eq!(adj.neighbors(a).len(), 1);
 }
@@ -499,8 +506,10 @@ fn adjacency_remove_edges() {
     let b = store.put(b"b").unwrap();
     let c = store.put(b"c").unwrap();
 
-    adj.add_edge(a, b"knows", b, std::collections::BTreeMap::new()).unwrap();
-    adj.add_edge(a, b"knows", c, std::collections::BTreeMap::new()).unwrap();
+    adj.add_edge(a, b"knows", b, std::collections::BTreeMap::new())
+        .unwrap();
+    adj.add_edge(a, b"knows", c, std::collections::BTreeMap::new())
+        .unwrap();
     adj.remove_edges(a, b);
 
     let remaining = adj.neighbors(a);
@@ -533,7 +542,8 @@ fn adjacency_survives_reopen() {
         let mut adj = AdjacencyIndex::open("g", &idir).unwrap();
         let alice = store.put(b"alice").unwrap();
         let bob = store.put(b"bob").unwrap();
-        adj.add_edge(alice, b"friend", bob, std::collections::BTreeMap::new()).unwrap();
+        adj.add_edge(alice, b"friend", bob, std::collections::BTreeMap::new())
+            .unwrap();
         adj.flush().unwrap();
         (alice, bob)
     };
@@ -637,7 +647,8 @@ fn compaction_followed_by_all_index_queries() {
 
     lsm.put(b"alice", alice).unwrap();
     btree.put(b"alice", alice).unwrap();
-    adj.add_edge(alice, b"knows", bob, std::collections::BTreeMap::new()).unwrap();
+    adj.add_edge(alice, b"knows", bob, std::collections::BTreeMap::new())
+        .unwrap();
 
     store.delete(stale).unwrap();
     let stats = store.compact().unwrap();
@@ -920,7 +931,7 @@ fn storage_engine_compact_selected_indexes_errors_on_unknown() {
     let err = engine
         .compact_selected_indexes(&["does-not-exist"])
         .unwrap_err();
-    assert!(matches!(err, trident::TridentError::InvalidConfig(_)));
+    assert!(matches!(err, praxis::PraxisError::InvalidConfig(_)));
 }
 
 #[test]
@@ -955,7 +966,7 @@ fn storage_engine_put_rejects_unknown_index_before_wal_append() {
     let err = engine
         .put(b"value", &[IndexInsert::new("missing", b"k".to_vec())])
         .unwrap_err();
-    assert!(matches!(err, trident::TridentError::InvalidConfig(_)));
+    assert!(matches!(err, praxis::PraxisError::InvalidConfig(_)));
 
     let entries = StorageWal::replay(&dir.path().join("wal").join("storage.wal")).unwrap();
     assert!(

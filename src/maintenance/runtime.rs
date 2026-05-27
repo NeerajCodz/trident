@@ -1,5 +1,5 @@
-use crate::engine::TridentEngine;
-use crate::errors::{Result, TridentError};
+use crate::engine::PraxisEngine;
+use crate::errors::{PraxisError, Result};
 use crate::maintenance::job::{MaintenanceLane, MaintenanceRuntimeConfig, RuntimeStatusSnapshot};
 use crate::slog;
 use std::collections::BTreeMap;
@@ -23,13 +23,13 @@ pub struct MaintenanceRuntimeController {
 }
 
 impl MaintenanceRuntimeController {
-    pub fn start(&mut self, engine: TridentEngine, config: MaintenanceRuntimeConfig) -> Result<()> {
+    pub fn start(&mut self, engine: PraxisEngine, config: MaintenanceRuntimeConfig) -> Result<()> {
         if self.is_running() {
-            return Err(TridentError::MaintenanceRuntimeRunning);
+            return Err(PraxisError::MaintenanceRuntimeRunning);
         }
         let total_workers = config.flush.workers + config.compaction.workers + config.admin.workers;
         if total_workers == 0 {
-            return Err(TridentError::InvalidConfig(
+            return Err(PraxisError::InvalidConfig(
                 "maintenance runtime requires at least one worker".to_string(),
             ));
         }
@@ -45,7 +45,7 @@ impl MaintenanceRuntimeController {
                 let stop_signal = stop.clone();
                 let worker_engine = engine.clone();
                 let idle_sleep_ms = config.idle_sleep_ms.max(1);
-                let name = format!("trident-{lane:?}-{worker_index}");
+                let name = format!("praxis-{lane:?}-{worker_index}");
                 let handle = thread::Builder::new()
                     .name(name)
                     .spawn(move || {
@@ -66,7 +66,7 @@ impl MaintenanceRuntimeController {
                             }
                         }
                     })
-                    .map_err(TridentError::Io)?;
+                    .map_err(PraxisError::Io)?;
                 self.workers.push(RuntimeWorkerHandle { lane, handle });
             }
         }
@@ -84,7 +84,7 @@ impl MaintenanceRuntimeController {
 
     pub fn stop(&mut self) -> Result<()> {
         let Some(stop) = &self.stop else {
-            return Err(TridentError::MaintenanceRuntimeNotRunning);
+            return Err(PraxisError::MaintenanceRuntimeNotRunning);
         };
         stop.store(true, Ordering::Relaxed);
         slog::info("maintenance_runtime_stop_requested", slog::context());
@@ -93,11 +93,11 @@ impl MaintenanceRuntimeController {
 
     pub fn join(&mut self) -> Result<()> {
         if self.workers.is_empty() {
-            return Err(TridentError::MaintenanceRuntimeNotRunning);
+            return Err(PraxisError::MaintenanceRuntimeNotRunning);
         }
         while let Some(worker) = self.workers.pop() {
             worker.handle.join().map_err(|_| {
-                TridentError::TaskJoin("maintenance runtime worker panicked".to_string())
+                PraxisError::TaskJoin("maintenance runtime worker panicked".to_string())
             })?;
         }
         self.stop = None;

@@ -1,6 +1,6 @@
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
-use trident::query::QueryModel;
-use trident::query::hybrid::HybridPlan;
+use praxis::query::QueryModel;
+use praxis::query::hybrid::HybridPlan;
 
 fn bench_hybrid_planning(c: &mut Criterion) {
     c.bench_function("hybrid_sql_vector_graph_search_plan", |b| {

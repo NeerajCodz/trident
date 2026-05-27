@@ -1,4 +1,4 @@
-use crate::errors::{Result, TridentError};
+use crate::errors::{PraxisError, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -13,7 +13,7 @@ pub const DEFAULT_MEMTABLE_FLUSH_THRESHOLD_BYTES: usize = 64 * 1024 * 1024;
 pub const DEFAULT_IMMUTABLE_MEMTABLE_LIMIT: usize = 4;
 pub const DEFAULT_L0_SLOWDOWN_SEGMENTS: usize = 8;
 pub const DEFAULT_L0_STOP_SEGMENTS: usize = 12;
-pub const DEFAULT_SERVICE_NAME: &str = "trident";
+pub const DEFAULT_SERVICE_NAME: &str = "praxis";
 pub const DEFAULT_FLUSH_RATE_LIMIT_BYTES_PER_SEC: usize = 128 * 1024 * 1024;
 pub const DEFAULT_COMPACTION_RATE_LIMIT_BYTES_PER_SEC: usize = 64 * 1024 * 1024;
 pub const DEFAULT_MAINTENANCE_QUEUE_CAPACITY: usize = 4096;
@@ -21,7 +21,7 @@ pub const DEFAULT_MAINTENANCE_RETRY_LIMIT: u8 = 3;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
-pub struct TridentConfig {
+pub struct PraxisConfig {
     pub data_dir: PathBuf,
     pub page_size: usize,
     pub block_size: usize,
@@ -78,11 +78,11 @@ pub struct PersistedEngineConfig {
 
 impl Default for PersistedEngineConfig {
     fn default() -> Self {
-        TridentConfig::default().persisted()
+        PraxisConfig::default().persisted()
     }
 }
 
-impl TridentConfig {
+impl PraxisConfig {
     pub fn new(data_dir: impl Into<PathBuf>) -> Self {
         Self {
             data_dir: data_dir.into(),
@@ -92,98 +92,98 @@ impl TridentConfig {
 
     pub fn validate(&self) -> Result<()> {
         if self.page_size < 4096 {
-            return Err(TridentError::InvalidConfig(
+            return Err(PraxisError::InvalidConfig(
                 "page_size must be at least 4096 bytes".to_string(),
             ));
         }
         if !self.page_size.is_power_of_two() {
-            return Err(TridentError::InvalidConfig(
+            return Err(PraxisError::InvalidConfig(
                 "page_size must be a power of two".to_string(),
             ));
         }
         if self.block_size < 4096 {
-            return Err(TridentError::InvalidConfig(
+            return Err(PraxisError::InvalidConfig(
                 "block_size must be at least 4096 bytes".to_string(),
             ));
         }
         if !self.block_size.is_power_of_two() {
-            return Err(TridentError::InvalidConfig(
+            return Err(PraxisError::InvalidConfig(
                 "block_size must be a power of two".to_string(),
             ));
         }
         if self.segment_size < self.page_size {
-            return Err(TridentError::InvalidConfig(
+            return Err(PraxisError::InvalidConfig(
                 "segment_size must be at least page_size".to_string(),
             ));
         }
         if self.wal_segment_size < self.page_size {
-            return Err(TridentError::InvalidConfig(
+            return Err(PraxisError::InvalidConfig(
                 "wal_segment_size must be at least page_size".to_string(),
             ));
         }
         if self.cache_size_bytes < self.page_size {
-            return Err(TridentError::InvalidConfig(
+            return Err(PraxisError::InvalidConfig(
                 "cache_size_bytes must be at least page_size".to_string(),
             ));
         }
         if self.background_workers == 0 {
-            return Err(TridentError::InvalidConfig(
+            return Err(PraxisError::InvalidConfig(
                 "background_workers must be greater than zero".to_string(),
             ));
         }
         if self.large_value_threshold == 0 {
-            return Err(TridentError::InvalidConfig(
+            return Err(PraxisError::InvalidConfig(
                 "large_value_threshold must be greater than zero".to_string(),
             ));
         }
         if self.memtable_flush_threshold_bytes < self.page_size {
-            return Err(TridentError::InvalidConfig(
+            return Err(PraxisError::InvalidConfig(
                 "memtable_flush_threshold_bytes must be at least page_size".to_string(),
             ));
         }
         if self.immutable_memtable_limit == 0 {
-            return Err(TridentError::InvalidConfig(
+            return Err(PraxisError::InvalidConfig(
                 "immutable_memtable_limit must be greater than zero".to_string(),
             ));
         }
         if self.l0_slowdown_segments == 0 {
-            return Err(TridentError::InvalidConfig(
+            return Err(PraxisError::InvalidConfig(
                 "l0_slowdown_segments must be greater than zero".to_string(),
             ));
         }
         if self.l0_stop_segments < self.l0_slowdown_segments {
-            return Err(TridentError::InvalidConfig(
+            return Err(PraxisError::InvalidConfig(
                 "l0_stop_segments must be greater than or equal to l0_slowdown_segments"
                     .to_string(),
             ));
         }
         if self.logging.service.trim().is_empty() {
-            return Err(TridentError::InvalidConfig(
+            return Err(PraxisError::InvalidConfig(
                 "logging.service must not be empty".to_string(),
             ));
         }
         if self.logging.schema_version.trim().is_empty() {
-            return Err(TridentError::InvalidConfig(
+            return Err(PraxisError::InvalidConfig(
                 "logging.schema_version must not be empty".to_string(),
             ));
         }
         if self.flush_rate_limit_bytes_per_sec == 0 {
-            return Err(TridentError::InvalidConfig(
+            return Err(PraxisError::InvalidConfig(
                 "flush_rate_limit_bytes_per_sec must be greater than zero".to_string(),
             ));
         }
         if self.compaction_rate_limit_bytes_per_sec == 0 {
-            return Err(TridentError::InvalidConfig(
+            return Err(PraxisError::InvalidConfig(
                 "compaction_rate_limit_bytes_per_sec must be greater than zero".to_string(),
             ));
         }
         if self.maintenance_queue_capacity == 0 {
-            return Err(TridentError::InvalidConfig(
+            return Err(PraxisError::InvalidConfig(
                 "maintenance_queue_capacity must be greater than zero".to_string(),
             ));
         }
         if self.maintenance_retry_limit == 0 {
-            return Err(TridentError::InvalidConfig(
+            return Err(PraxisError::InvalidConfig(
                 "maintenance_retry_limit must be greater than zero".to_string(),
             ));
         }
@@ -227,10 +227,10 @@ impl TridentConfig {
     }
 }
 
-impl Default for TridentConfig {
+impl Default for PraxisConfig {
     fn default() -> Self {
         Self {
-            data_dir: PathBuf::from(".trident"),
+            data_dir: PathBuf::from(".praxis"),
             page_size: DEFAULT_PAGE_SIZE,
             block_size: DEFAULT_BLOCK_SIZE,
             segment_size: DEFAULT_SEGMENT_SIZE,

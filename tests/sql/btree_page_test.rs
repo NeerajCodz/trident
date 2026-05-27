@@ -1,5 +1,5 @@
-use trident::index::btree::page::{BTreePage, BTreePageId};
-use trident::store::RecordId;
+use praxis::index::btree::page::{BTreePage, BTreePageId};
+use praxis::store::RecordId;
 
 #[test]
 fn btree_page_roundtrips_sorted_leaf_entries() {

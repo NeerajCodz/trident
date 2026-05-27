@@ -1,5 +1,5 @@
 use crate::datatype::SegmentFamily;
-use crate::errors::{Result, TridentError};
+use crate::errors::{PraxisError, Result};
 use crate::io::{BinaryReader, BinaryWriter, crc32c};
 use serde::{Deserialize, Serialize};
 use std::fs::OpenOptions;
@@ -85,7 +85,7 @@ impl BlobStore {
 
     pub fn read(&self, location: &BlobLocation) -> Result<Vec<u8>> {
         if location.family != self.family || location.file_id != self.file_id {
-            return Err(TridentError::InvalidConfig(
+            return Err(PraxisError::InvalidConfig(
                 "blob location does not belong to this store".to_string(),
             ));
         }
@@ -128,7 +128,7 @@ impl BlobStore {
 }
 
 fn corrupt<T>(path: &Path, reason: &str) -> Result<T> {
-    Err(TridentError::Corrupt {
+    Err(PraxisError::Corrupt {
         path: path.to_path_buf(),
         reason: reason.to_string(),
     })

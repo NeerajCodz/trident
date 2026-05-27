@@ -5,7 +5,7 @@ pub mod manager;
 pub mod page;
 
 use super::{IndexPlugin, IndexStats};
-use crate::errors::{Result, TridentError};
+use crate::errors::{PraxisError, Result};
 use crate::io::{BinaryReader, BinaryWriter, crc32c};
 use crate::store::RecordId;
 use serde::{Deserialize, Serialize};
@@ -291,20 +291,20 @@ fn encode_binary_snapshot(on_disk: &OnDisk) -> Vec<u8> {
 
 fn decode_binary_snapshot(bytes: &[u8], source: &Path) -> Result<OnDisk> {
     if bytes.len() < 13 {
-        return Err(TridentError::Corrupt {
+        return Err(PraxisError::Corrupt {
             path: source.to_path_buf(),
             reason: "truncated B-tree snapshot header".to_string(),
         });
     }
     let magic = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
     if magic != BTREE_SNAPSHOT_MAGIC {
-        return Err(TridentError::Corrupt {
+        return Err(PraxisError::Corrupt {
             path: source.to_path_buf(),
             reason: "bad B-tree snapshot magic".to_string(),
         });
     }
     if bytes[4] != BTREE_SNAPSHOT_VERSION {
-        return Err(TridentError::Corrupt {
+        return Err(PraxisError::Corrupt {
             path: source.to_path_buf(),
             reason: format!("unsupported B-tree snapshot version {}", bytes[4]),
         });
@@ -312,7 +312,7 @@ fn decode_binary_snapshot(bytes: &[u8], source: &Path) -> Result<OnDisk> {
     let payload_len = u32::from_le_bytes([bytes[5], bytes[6], bytes[7], bytes[8]]) as usize;
     let expected_crc = u32::from_le_bytes([bytes[9], bytes[10], bytes[11], bytes[12]]);
     if bytes.len() < 13 + payload_len {
-        return Err(TridentError::Corrupt {
+        return Err(PraxisError::Corrupt {
             path: source.to_path_buf(),
             reason: "truncated B-tree snapshot payload".to_string(),
         });
@@ -320,7 +320,7 @@ fn decode_binary_snapshot(bytes: &[u8], source: &Path) -> Result<OnDisk> {
     let payload = &bytes[13..13 + payload_len];
     let actual_crc = crc32c(payload);
     if actual_crc != expected_crc {
-        return Err(TridentError::Corrupt {
+        return Err(PraxisError::Corrupt {
             path: source.to_path_buf(),
             reason: format!(
                 "B-tree snapshot checksum mismatch: expected {expected_crc:#010x}, got {actual_crc:#010x}"

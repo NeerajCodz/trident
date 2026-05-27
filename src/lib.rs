@@ -1,4 +1,4 @@
-//! Trident: primitive-first universal storage kernel with a single-copy guarantee.
+//! praxis: primitive-first universal storage kernel with a single-copy guarantee.
 //!
 //! Every piece of data is stored exactly once in the primary data store.
 //! All indexes (LSM, B-tree, Adjacency, HNSW) hold only pointer-to-RecordId mappings.
@@ -20,9 +20,9 @@ pub mod datatype;
 pub mod disk;
 pub mod document;
 pub mod engine;
+pub mod errors;
 pub mod events;
 pub mod execution;
-pub mod errors;
 pub mod formats;
 pub mod identity;
 pub mod index;
@@ -50,32 +50,31 @@ pub mod types;
 pub mod values;
 pub mod wal;
 
-pub use config::{CompactionStrategy, Compression, TridentConfig, WalSyncPolicy};
-pub use engine::TridentEngine;
-pub use engine::r#async::AsyncTridentEngine;
-pub use errors::{Result, TridentError};
+pub use catalog::schema::{
+    AttributeSchema, AttributeType, Catalog, CollectionSchema, DistanceMetric, StorageClass,
+};
+pub use config::{CompactionStrategy, Compression, PraxisConfig, WalSyncPolicy};
+pub use document::{Edge, Record, RecordDirectory};
+pub use engine::PraxisEngine;
+pub use engine::r#async::AsyncPraxisEngine;
+pub use errors::{PraxisError, Result};
+pub use execution::Executor;
 pub use identity::{Aid, Cid, Did, Eid, Fid, FieldId, Pid, RelativeVid, Rid, Sid, Vid, VidContext};
 pub use index::IndexPlugin;
 pub use index::{
     AdjacencyIndex, BTreeIndex, BitmapIndex, BoundingBox, HnswIndex, InvertedIndex, IvfFlatIndex,
     PackedRTreeIndex, TimePartition,
 };
-pub use maintenance::{JobPriority, MaintenanceRuntimeConfig, RuntimeLaneConfig};
-pub use storage::lsm::LsmIndex;
-pub use store::RecordId;
-pub use catalog::schema::{
-    AttributeSchema, AttributeType, Catalog, CollectionSchema, DistanceMetric, StorageClass,
-};
-pub use document::{Edge, Record, RecordDirectory};
-pub use execution::Executor;
 pub use index::{
-    Bm25Index, GraphIndex, HybridWeights, RetrievalEngine, ScalarIndex, VectorIndex,
-    VectorStrategy,
+    Bm25Index, GraphIndex, HybridWeights, RetrievalEngine, ScalarIndex, VectorIndex, VectorStrategy,
 };
+pub use maintenance::{JobPriority, MaintenanceRuntimeConfig, RuntimeLaneConfig};
 pub use planner::{PhysicalOperator, PhysicalPlan, Planner, PlannerStats};
 pub use query::{
     AsOfClause, BooleanExpression, DdlPlan, FullTextClause, LogicalPlan, MutationPlan, Predicate,
     QueryLanguage, QueryOperation, QueryParser, TraversalClause, VectorClause,
 };
+pub use storage::lsm::LsmIndex;
+pub use store::RecordId;
 pub use transactions::WriteBatch;
 pub use types::ColumnFamily;

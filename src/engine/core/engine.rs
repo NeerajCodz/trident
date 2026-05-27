@@ -1,11 +1,11 @@
-use super::state::EngineInner;
+use super::state::{CacheKey, EngineInner};
 use crate::accel::gpu::GpuBackendKind;
 use crate::accel::{Accelerator, CpuAccelerator, GpuAccelerator};
 use crate::cache::BlockCache;
-use crate::config::{AcceleratorBackend, PersistedEngineConfig, TridentConfig};
+use crate::config::{AcceleratorBackend, PersistedEngineConfig, PraxisConfig};
 use crate::disk::DiskLayout;
 use crate::engine::compaction::{job_state, planner};
-use crate::errors::{Result, TridentError};
+use crate::errors::{PraxisError, Result};
 use crate::io::{IoRateLimiter, resolve_io_execution};
 use crate::maintenance::MaintenanceScheduler;
 use crate::manifest::{
@@ -25,7 +25,7 @@ use crate::types::{
 use crate::values::ValueLog;
 use crate::wal::{Wal, WalRecord};
 use bytes::Bytes;
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -34,12 +34,12 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub struct TridentEngine {
+pub struct PraxisEngine {
     pub(crate) inner: Arc<EngineInner>,
 }
 
-impl TridentEngine {
-    pub fn open(config: TridentConfig) -> Result<Self> {
+impl PraxisEngine {
+    pub fn open(config: PraxisConfig) -> Result<Self> {
         config.validate()?;
         slog::Logger::init(config.logging.clone());
         let accelerator: Arc<dyn Accelerator> = match config.accelerator {
@@ -52,7 +52,7 @@ impl TridentEngine {
         let manifest_store = ManifestStore::new(layout.manifest_path());
         let mut manifest = manifest_store.load_or_create(&config)?;
         if manifest.effective_config != config.persisted() {
-            return Err(TridentError::ConfigMismatch(
+            return Err(PraxisError::ConfigMismatch(
                 "open config differs from persisted effective engine config".to_string(),
             ));
         }
@@ -114,8 +114,9 @@ impl TridentEngine {
                 cas_serialization: Mutex::new(()),
                 manifest: Mutex::new(manifest),
                 wal: Mutex::new(wal),
-                memtable: Mutex::new(memtable),
-                segment_index: Mutex::new(segment_index),
+                memtable: RwLock::new(memtable),
+                segment_index: RwLock::new(segment_index),
+                immutable_memtables: Mutex::new(Vec::new()),
                 snapshots,
                 group_commit: crate::engine::core::state::GroupCommitCoordinator::default(),
                 metrics,
@@ -133,7 +134,7 @@ impl TridentEngine {
     }
 
     pub fn open_from_file(path: impl Into<PathBuf>) -> Result<Self> {
-        Self::open(TridentConfig::from_file(path)?)
+        Self::open(PraxisConfig::from_file(path)?)
     }
 
     pub fn effective_config(&self) -> PersistedEngineConfig {
@@ -190,7 +191,7 @@ impl TridentEngine {
         )?;
         let current_bytes = current.as_deref();
         if current_bytes != expected {
-            return Err(TridentError::CompareAndSwapFailed);
+            return Err(PraxisError::CompareAndSwapFailed);
         }
         let mut batch = WriteBatch::new();
         batch.put_default(key, value);
@@ -231,7 +232,7 @@ impl TridentEngine {
         self.inner.wal.lock().append(&record)?;
         self.maybe_group_commit_wal()?;
         {
-            let mut memtable = self.inner.memtable.lock();
+            let mut memtable = self.inner.memtable.write();
             for op in batch.ops() {
                 memtable.apply(sequence, op);
                 match op {
@@ -252,7 +253,7 @@ impl TridentEngine {
         self.inner
             .manifest_store
             .save_with_policy(&self.inner.manifest.lock(), self.inner.config.direct_io)?;
-        let memtable_bytes = self.inner.memtable.lock().approximate_bytes();
+        let memtable_bytes = self.inner.memtable.read().approximate_bytes();
         self.inner
             .metrics
             .memtable_bytes
@@ -389,6 +390,33 @@ impl TridentEngine {
         Ok(())
     }
 
+    /// Delete WAL files whose data has been flushed to segments.
+    /// Keeps the active WAL and one previous WAL as safety margin.
+    fn gc_old_wals(&self) {
+        let active_id = self.inner.manifest.lock().active_wal_id;
+        if active_id < 2 {
+            return;
+        }
+        let cutoff = active_id - 1;
+        let wal_root = self.inner.layout.wal_root();
+        let Ok(entries) = std::fs::read_dir(&wal_root) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if !name_str.ends_with(".wal") {
+                continue;
+            }
+            let id_str = &name_str[..name_str.len() - 4];
+            if let Ok(id) = id_str.parse::<u64>()
+                && id < cutoff
+            {
+                std::fs::remove_file(entry.path()).ok();
+            }
+        }
+    }
+
     fn relieve_l0_pressure_before_write(&self) -> Result<()> {
         let l0_count = self.l0_segment_count();
         if l0_count < self.inner.config.l0_slowdown_segments {
@@ -405,7 +433,7 @@ impl TridentEngine {
             .fetch_add(1, Ordering::Relaxed);
         let l0_count = self.l0_segment_count();
         if l0_count >= self.inner.config.l0_stop_segments {
-            return Err(TridentError::WriteStalled {
+            return Err(PraxisError::WriteStalled {
                 reason: format!(
                     "level-0 segment count {l0_count} exceeds hard stop {}",
                     self.inner.config.l0_stop_segments
@@ -439,7 +467,7 @@ impl TridentEngine {
             .iter()
             .any(|existing| existing.name == descriptor.name)
         {
-            return Err(TridentError::ColumnFamilyExists(descriptor.name));
+            return Err(PraxisError::ColumnFamilyExists(descriptor.name));
         }
         manifest.column_families.push(descriptor);
         self.inner
@@ -449,19 +477,59 @@ impl TridentEngine {
 
     pub fn drop_column_family(&self, name: &str) -> Result<()> {
         if name == ColumnFamily::default().0 {
-            return Err(TridentError::CannotDropDefaultColumnFamily);
+            return Err(PraxisError::CannotDropDefaultColumnFamily);
         }
-        let mut manifest = self.inner.manifest.lock();
-        let original_len = manifest.column_families.len();
-        manifest
-            .column_families
-            .retain(|family| family.name != name);
-        if manifest.column_families.len() == original_len {
-            return Err(TridentError::UnknownColumnFamily(name.to_string()));
+        // Check CF exists and remove from manifest
+        {
+            let mut manifest = self.inner.manifest.lock();
+            let original_len = manifest.column_families.len();
+            manifest
+                .column_families
+                .retain(|family| family.name != name);
+            if manifest.column_families.len() == original_len {
+                return Err(PraxisError::UnknownColumnFamily(name.to_string()));
+            }
+            self.inner
+                .manifest_store
+                .save_with_policy(&manifest, self.inner.config.direct_io)?;
         }
-        self.inner
-            .manifest_store
-            .save_with_policy(&manifest, self.inner.config.direct_io)
+
+        let cf = ColumnFamily(name.to_string());
+
+        // Remove from memtable
+        {
+            let mut mt = self.inner.memtable.write();
+            mt.remove_cf(&cf);
+        }
+
+        // Remove from immutable memtables
+        {
+            let mut immutables = self.inner.immutable_memtables.lock();
+            for imm in immutables.iter_mut() {
+                imm.remove_cf(&cf);
+            }
+        }
+
+        // Remove from segment_index
+        {
+            let mut si = self.inner.segment_index.write();
+            si.retain(|(k_cf, _), _| k_cf != &cf);
+        }
+
+        // Remove from cache
+        {
+            let cf_name = name.to_string();
+            let mut cache = self.inner.cache.lock();
+            cache.retain(|key: &CacheKey| key.0 != cf_name);
+        }
+
+        // Remove from cache_bytes_by_cf
+        {
+            let mut by_cf = self.inner.cache_bytes_by_cf.lock();
+            by_cf.remove(name);
+        }
+
+        Ok(())
     }
 
     pub fn list_column_families(&self) -> Vec<ColumnFamilyDescriptor> {
@@ -500,7 +568,7 @@ impl TridentEngine {
                 | BatchOp::Delete { cf, key } => (cf, key),
             };
             if self.latest_sequence_for_key(cf, key)? > snapshot.sequence {
-                return Err(TridentError::TransactionConflict {
+                return Err(PraxisError::TransactionConflict {
                     cf: cf.0.clone(),
                     key: String::from_utf8_lossy(key).to_string(),
                 });
@@ -514,18 +582,28 @@ impl TridentEngine {
         let memtable_sequence = self
             .inner
             .memtable
-            .lock()
+            .read()
             .latest_sequence(cf, key)
+            .unwrap_or_default();
+        let immutable_sequence = self
+            .inner
+            .immutable_memtables
+            .lock()
+            .iter()
+            .filter_map(|imm| imm.latest_sequence(cf, key))
+            .max()
             .unwrap_or_default();
         let segment_sequence = self
             .inner
             .segment_index
-            .lock()
+            .read()
             .get(&(cf.clone(), Bytes::copy_from_slice(key)))
             .and_then(|versions| versions.last())
             .map(|version| version.sequence)
             .unwrap_or_default();
-        Ok(memtable_sequence.max(segment_sequence))
+        Ok(memtable_sequence
+            .max(immutable_sequence)
+            .max(segment_sequence))
     }
 
     pub(crate) fn ensure_column_family(&self, cf: &ColumnFamily) -> Result<()> {
@@ -539,94 +617,121 @@ impl TridentEngine {
         {
             Ok(())
         } else {
-            Err(TridentError::UnknownColumnFamily(cf.0.clone()))
+            Err(PraxisError::UnknownColumnFamily(cf.0.clone()))
         }
     }
 
     pub fn flush(&self) -> Result<Option<u64>> {
         let started = std::time::Instant::now();
-        let entries = self.inner.memtable.lock().drain_latest();
-        if entries.is_empty() {
-            return Ok(None);
-        }
-        let segment_id = {
-            let mut manifest = self.inner.manifest.lock();
-            let id = manifest.next_segment_id;
-            manifest.next_segment_id += 1;
-            id
-        };
-        let path = self.inner.layout.segment_path(0, segment_id);
-        let mut value_log = ValueLog::open(self.inner.layout.value_log_path(segment_id))?;
-        let segment_entries = entries
-            .into_iter()
-            .map(|(cf, key, version)| crate::segments::block::SegmentEntry { cf, key, version })
-            .collect::<Vec<_>>();
-        let cf_options = self.cf_options_map();
-        let partitioned_bloom = infer_partitioned_bloom(&segment_entries, &cf_options);
-        let mut flush_limiter =
-            IoRateLimiter::new(self.inner.config.flush_rate_limit_bytes_per_sec);
-        flush_limiter.consume(segment_entries.len() * 256);
-        let compression = effective_segment_compression(
-            &segment_entries,
-            &cf_options,
-            self.inner.config.compression,
-        );
-        let metadata = SegmentWriter::write(
-            SegmentWriteOptions {
-                path: &path,
-                id: segment_id,
-                level: 0,
-                compression,
-                accelerator: self.inner.accelerator.as_ref(),
-                value_log: &mut value_log,
-                large_value_threshold: self.inner.config.large_value_threshold,
-                block_size: self.inner.config.block_size,
-                partitioned_bloom,
-                direct_io: self.inner.config.direct_io,
-            },
-            segment_entries,
-        )?;
-        let flushed_entries = metadata.entries;
-        let loaded = SegmentReader::read(
-            &path,
-            self.inner.accelerator.as_ref(),
-            self.inner.config.direct_io,
-        )?;
+
+        // Double-buffer: swap active memtable out under write lock, then flush
+        // without holding the active memtable lock.  Reads continue against the
+        // (now-empty) active memtable and the immutable list.
         {
-            let mut segment_index = self.inner.segment_index.lock();
-            for entry in loaded {
-                segment_index
-                    .entry((entry.cf, entry.key))
-                    .or_default()
-                    .push(entry.version);
+            let mut mt = self.inner.memtable.write();
+            if mt.is_empty() && self.inner.immutable_memtables.lock().is_empty() {
+                return Ok(None);
+            }
+            if !mt.is_empty() {
+                let old = std::mem::take(&mut *mt);
+                self.inner.immutable_memtables.lock().push(old);
             }
         }
-        {
-            let mut manifest = self.inner.manifest.lock();
-            manifest.segments.push(metadata);
-            self.inner
-                .manifest_store
-                .save_with_policy(&manifest, self.inner.config.direct_io)?;
+
+        // Flush every immutable memtable to its own segment.
+        let immutables: Vec<MemTable> = std::mem::take(&mut *self.inner.immutable_memtables.lock());
+        let mut last_segment_id = None;
+        for imm in &immutables {
+            let entries = imm.drain_latest();
+            if entries.is_empty() {
+                continue;
+            }
+            let segment_id = {
+                let mut manifest = self.inner.manifest.lock();
+                let id = manifest.next_segment_id;
+                manifest.next_segment_id += 1;
+                id
+            };
+            let path = self.inner.layout.segment_path(0, segment_id);
+            let mut value_log = ValueLog::open(self.inner.layout.value_log_path(segment_id))?;
+            let segment_entries = entries
+                .into_iter()
+                .map(|(cf, key, version)| crate::segments::block::SegmentEntry { cf, key, version })
+                .collect::<Vec<_>>();
+            let cf_options = self.cf_options_map();
+            let partitioned_bloom = infer_partitioned_bloom(&segment_entries, &cf_options);
+            let mut flush_limiter =
+                IoRateLimiter::new(self.inner.config.flush_rate_limit_bytes_per_sec);
+            flush_limiter.consume(segment_entries.len() * 256);
+            let compression = effective_segment_compression(
+                &segment_entries,
+                &cf_options,
+                self.inner.config.compression,
+            );
+            let metadata = SegmentWriter::write(
+                SegmentWriteOptions {
+                    path: &path,
+                    id: segment_id,
+                    level: 0,
+                    compression,
+                    accelerator: self.inner.accelerator.as_ref(),
+                    value_log: &mut value_log,
+                    large_value_threshold: self.inner.config.large_value_threshold,
+                    block_size: self.inner.config.block_size,
+                    partitioned_bloom,
+                    direct_io: self.inner.config.direct_io,
+                },
+                segment_entries,
+            )?;
+            let flushed_entries = metadata.entries;
+            let loaded = SegmentReader::read(
+                &path,
+                self.inner.accelerator.as_ref(),
+                self.inner.config.direct_io,
+            )?;
+            {
+                let mut segment_index = self.inner.segment_index.write();
+                for entry in loaded {
+                    segment_index
+                        .entry((entry.cf, entry.key))
+                        .or_default()
+                        .push(entry.version);
+                }
+            }
+            {
+                let mut manifest = self.inner.manifest.lock();
+                manifest.segments.push(metadata);
+                self.inner
+                    .manifest_store
+                    .save_with_policy(&manifest, self.inner.config.direct_io)?;
+            }
+            last_segment_id = Some((segment_id, flushed_entries));
         }
-        self.inner.memtable.lock().clear();
+
         self.inner
             .metrics
             .memtable_bytes
             .store(0, Ordering::Relaxed);
         self.install_new_active_wal()?;
+        self.gc_old_wals();
         self.inner
             .metrics
             .segment_flushes
             .fetch_add(1, Ordering::Relaxed);
-        slog::info(
-            "flush",
-            slog::context()
-                .with_u64("segment_id", segment_id)
-                .with_u64("entries", flushed_entries)
-                .with_u64("duration_ms", started.elapsed().as_millis() as u64)
-                .with_str("outcome", "success"),
-        );
-        Ok(Some(segment_id))
+
+        if let Some((segment_id, flushed_entries)) = last_segment_id {
+            slog::info(
+                "flush",
+                slog::context()
+                    .with_u64("segment_id", segment_id)
+                    .with_u64("entries", flushed_entries)
+                    .with_u64("duration_ms", started.elapsed().as_millis() as u64)
+                    .with_str("outcome", "success"),
+            );
+            Ok(Some(segment_id))
+        } else {
+            Ok(None)
+        }
     }
 
     pub fn compact(&self) -> Result<u64> {
@@ -652,7 +757,7 @@ impl TridentEngine {
         let pinned_snapshots = self.inner.snapshots.pinned_sequences();
         let mut compacted = Vec::new();
         let cf_options = self.cf_options_map();
-        for ((cf, key), versions) in self.inner.segment_index.lock().iter() {
+        for ((cf, key), versions) in self.inner.segment_index.read().iter() {
             let strategy = cf_options
                 .get(&cf.0)
                 .map(|options| options.compaction_strategy)
@@ -675,7 +780,7 @@ impl TridentEngine {
             self.inner
                 .manifest_store
                 .save_with_policy(&manifest, self.inner.config.direct_io)?;
-            self.inner.segment_index.lock().clear();
+            self.inner.segment_index.write().clear();
             return Ok(0);
         }
         let path = self.inner.layout.segment_path(target_level, segment_id);
@@ -716,7 +821,7 @@ impl TridentEngine {
                 .push(entry.version);
         }
         {
-            let mut segment_index = self.inner.segment_index.lock();
+            let mut segment_index = self.inner.segment_index.write();
             *segment_index = rebuilt;
         }
         {
@@ -884,11 +989,14 @@ impl TridentEngine {
         let mut chain = self
             .inner
             .segment_index
-            .lock()
+            .read()
             .get(&(cf.clone(), Bytes::copy_from_slice(key)))
             .cloned()
             .unwrap_or_default();
-        chain.extend(self.inner.memtable.lock().versions_for_key(cf, key));
+        chain.extend(self.inner.memtable.read().versions_for_key(cf, key));
+        for imm in self.inner.immutable_memtables.lock().iter() {
+            chain.extend(imm.versions_for_key(cf, key));
+        }
         chain.sort_by_key(|version| version.sequence);
         self.resolve_versions_chain(cf, &chain, snapshot)
     }
@@ -1047,7 +1155,7 @@ impl TridentEngine {
             let metadata = std::fs::metadata(&path)?;
             let digest = crate::io::file_digest(&path)?.to_hex().to_string();
             if digest != segment.file_digest {
-                return Err(TridentError::Corrupt {
+                return Err(PraxisError::Corrupt {
                     path,
                     reason: "segment digest mismatch".to_string(),
                 });
@@ -1065,7 +1173,7 @@ impl TridentEngine {
             let metadata = std::fs::metadata(&path)?;
             let digest = crate::io::file_digest(&path)?.to_hex().to_string();
             if digest != checkpoint.file_digest {
-                return Err(TridentError::Corrupt {
+                return Err(PraxisError::Corrupt {
                     path,
                     reason: "checkpoint digest mismatch".to_string(),
                 });
@@ -1102,7 +1210,7 @@ impl TridentEngine {
         let backup_dir = backup_dir.as_ref();
         let target_dir = target_dir.as_ref();
         if !backup_dir.exists() {
-            return Err(TridentError::InvalidConfig(format!(
+            return Err(PraxisError::InvalidConfig(format!(
                 "backup directory does not exist: {}",
                 backup_dir.to_string_lossy()
             )));
@@ -1286,7 +1394,7 @@ fn effective_segment_compression(
         .unwrap_or(default)
 }
 
-impl Clone for TridentEngine {
+impl Clone for PraxisEngine {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
@@ -1294,7 +1402,7 @@ impl Clone for TridentEngine {
     }
 }
 
-impl crate::disk::PoiesisStorageAdapter for TridentEngine {
+impl crate::disk::PoiesisStorageAdapter for PraxisEngine {
     fn put_page_value(&self, key: Key, value: Value) -> Result<SequenceNumber> {
         self.put(key, value)
     }

@@ -1,4 +1,4 @@
-use trident::memory::{AdaptiveMemoryQuota, MemoryManager, MemoryPoolKind, SpillPolicy};
+use praxis::memory::{AdaptiveMemoryQuota, MemoryManager, MemoryPoolKind, SpillPolicy};
 
 #[test]
 fn memory_manager_enforces_hard_quotas_and_spill_policy() {

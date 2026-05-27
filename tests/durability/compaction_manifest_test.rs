@@ -1,7 +1,7 @@
-use tempfile::tempdir;
-use trident::store::{
+use praxis::store::{
     ManifestEdit, RecordStore, StorageEngine, StorageManifest, StorageManifestStore,
 };
+use tempfile::tempdir;
 
 #[test]
 fn compaction_manifest_tracks_started_installed_and_cleanup() {

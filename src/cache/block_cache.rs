@@ -82,6 +82,22 @@ where
         evicted
     }
 
+    /// Remove all entries where the predicate returns false.
+    pub fn retain<F: Fn(&K) -> bool>(&mut self, predicate: F) {
+        let to_remove: Vec<K> = self
+            .entries
+            .keys()
+            .filter(|k| !predicate(k))
+            .cloned()
+            .collect();
+        for key in to_remove {
+            if let Some(entry) = self.entries.remove(&key) {
+                self.current_bytes = self.current_bytes.saturating_sub(entry.value.len());
+            }
+        }
+        self.order.retain(|(k, _)| predicate(k));
+    }
+
     fn evict(&mut self, evicted: &mut Vec<(K, Bytes)>) {
         while self.current_bytes > self.capacity_bytes {
             let Some((key, generation)) = self.order.pop_front() else {

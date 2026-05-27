@@ -1,1 +1,1 @@
-// WAL integration methods remain implemented on TridentEngine in core::engine.
+// WAL integration methods remain implemented on PraxisEngine in core::engine.

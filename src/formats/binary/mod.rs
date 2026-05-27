@@ -1,4 +1,4 @@
-//! Binary format implementations for Trident index plugins
+//! Binary format implementations for praxis index plugins
 //!
 //! Each index plugin (LSM, B-tree, Adjacency, HNSW) has a dedicated binary format:
 //! - Standardized header (32 bytes) with magic "TRID" and CRC32 checksum

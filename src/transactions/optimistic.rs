@@ -1,17 +1,17 @@
-use crate::engine::TridentEngine;
+use crate::engine::PraxisEngine;
 use crate::errors::Result;
 use crate::transactions::WriteBatch;
 use crate::types::{ColumnFamily, Key, ReadSnapshot, SequenceNumber, Value};
 
 #[derive(Clone)]
 pub struct OptimisticTransaction {
-    engine: TridentEngine,
+    engine: PraxisEngine,
     snapshot: ReadSnapshot,
     batch: WriteBatch,
 }
 
 impl OptimisticTransaction {
-    pub(crate) fn new(engine: TridentEngine, snapshot: ReadSnapshot) -> Self {
+    pub(crate) fn new(engine: PraxisEngine, snapshot: ReadSnapshot) -> Self {
         Self {
             engine,
             snapshot,

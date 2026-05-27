@@ -1,8 +1,8 @@
+use praxis::PraxisEngine;
+use praxis::accel::gpu::{GpuAccelerator, GpuBackendKind};
+use praxis::accel::{Accelerator, CpuAccelerator};
+use praxis::config::{AcceleratorBackend, Compression, PraxisConfig};
 use tempfile::tempdir;
-use trident::TridentEngine;
-use trident::accel::gpu::{GpuAccelerator, GpuBackendKind};
-use trident::accel::{Accelerator, CpuAccelerator};
-use trident::config::{AcceleratorBackend, Compression, TridentConfig};
 
 #[test]
 fn gpu_backends_match_cpu_results_without_hardware() {
@@ -40,10 +40,10 @@ fn engine_opens_with_gpu_accelerator_backends() {
         AcceleratorBackend::Metal,
     ] {
         let dir = tempdir().unwrap();
-        let mut config = TridentConfig::new(dir.path());
+        let mut config = PraxisConfig::new(dir.path());
         config.accelerator = backend;
 
-        TridentEngine::open(config).unwrap();
+        PraxisEngine::open(config).unwrap();
     }
 }
 
@@ -53,11 +53,11 @@ fn vector_kernel_validates_dimensions() {
     let right = [2.0_f32, 4.0, 6.0];
 
     assert_eq!(
-        trident::accel::gpu::kernels::squared_l2_distance(&left, &right),
+        praxis::accel::gpu::kernels::squared_l2_distance(&left, &right),
         Some(14.0)
     );
     assert_eq!(
-        trident::accel::gpu::kernels::squared_l2_distance(&left, &right[..2]),
+        praxis::accel::gpu::kernels::squared_l2_distance(&left, &right[..2]),
         None
     );
 }

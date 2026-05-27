@@ -1,10 +1,10 @@
 use crate::datatype::{
-    DataTypeRegistry, ExternalPointer, SegmentFamily, StorageClass, TridentValue, TypeCode,
+    DataTypeRegistry, ExternalPointer, PraxisValue, SegmentFamily, StorageClass, TypeCode,
 };
-use crate::errors::{Result, TridentError};
+use crate::errors::{PraxisError, Result};
 use crate::identity::{Aid, Cid, Did, Eid, Fid, FieldId, Pid, Rid, Sid, SlotAddress, Vid};
 use crate::io::{BinaryReader, BinaryWriter, crc32c};
-use crate::layout::TridentLayout;
+use crate::layout::PraxisLayout;
 use crate::manifest::PageManifestStore;
 use crate::page::{RecordPage, SlotDirectoryEntry};
 use crate::segments::{BlobLocation, BlobStore};
@@ -40,7 +40,7 @@ pub struct RidDirectory {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PageRecordStore {
-    layout: TridentLayout,
+    layout: PraxisLayout,
     cid: Cid,
     eid: Eid,
     fid: Fid,
@@ -85,7 +85,7 @@ impl RecordSlot {
         let start = offset.offset as usize;
         let end = start.saturating_add(offset.len as usize);
         if end > self.body.len() {
-            return Err(TridentError::Corrupt {
+            return Err(PraxisError::Corrupt {
                 path: "record-slot".into(),
                 reason: "field offset points outside record slot body".to_string(),
             });
@@ -107,12 +107,12 @@ impl RidDirectory {
         self.mappings
             .get(&rid)
             .copied()
-            .ok_or(TridentError::KeyNotFound)
+            .ok_or(PraxisError::KeyNotFound)
     }
 
     pub fn relocate(&mut self, rid: Rid, address: SlotAddress) -> Result<()> {
         if !self.mappings.contains_key(&rid) {
-            return Err(TridentError::KeyNotFound);
+            return Err(PraxisError::KeyNotFound);
         }
         self.mappings.insert(rid, address);
         Ok(())
@@ -227,7 +227,7 @@ impl RidDirectory {
 
 impl PageRecordStore {
     pub fn open(base: impl Into<PathBuf>, cid: Cid, eid: Eid) -> Result<Self> {
-        let layout = TridentLayout::new(base);
+        let layout = PraxisLayout::new(base);
         layout.create_all()?;
         layout.ensure_entity_tree(cid, eid)?;
         let map_path = layout.critical_map_path(cid, "rid_to_slot").path;
@@ -267,7 +267,7 @@ impl PageRecordStore {
         self.delete(rid)
     }
 
-    pub fn put_typed(&mut self, fields: &[(FieldId, TridentValue)]) -> Result<Rid> {
+    pub fn put_typed(&mut self, fields: &[(FieldId, PraxisValue)]) -> Result<Rid> {
         let encoded = self.encode_typed_record(fields)?;
         self.put(&[(FieldId::Dynamic(Did(0xffff)), encoded.as_slice())])
     }
@@ -278,7 +278,7 @@ impl PageRecordStore {
         let cell = cells
             .into_iter()
             .find(|cell| cell.field == field)
-            .ok_or(TridentError::KeyNotFound)?;
+            .ok_or(PraxisError::KeyNotFound)?;
         match cell.storage_class {
             StorageClass::Inline => Ok(cell.inline_bytes),
             StorageClass::External => {
@@ -287,12 +287,12 @@ impl PageRecordStore {
                     offset,
                     len,
                     checksum,
-                } = cell.pointer.ok_or_else(|| TridentError::Corrupt {
+                } = cell.pointer.ok_or_else(|| PraxisError::Corrupt {
                     path: PathBuf::from("typed-record"),
                     reason: "external typed cell is missing overflow pointer".to_string(),
                 })?
                 else {
-                    return Err(TridentError::Corrupt {
+                    return Err(PraxisError::Corrupt {
                         path: PathBuf::from("typed-record"),
                         reason: "external typed cell has non-overflow pointer".to_string(),
                     });
@@ -311,12 +311,12 @@ impl PageRecordStore {
                     segment_id,
                     offset,
                     len,
-                } = cell.pointer.ok_or_else(|| TridentError::Corrupt {
+                } = cell.pointer.ok_or_else(|| PraxisError::Corrupt {
                     path: PathBuf::from("typed-record"),
                     reason: "segment typed cell is missing segment pointer".to_string(),
                 })?
                 else {
-                    return Err(TridentError::Corrupt {
+                    return Err(PraxisError::Corrupt {
                         path: PathBuf::from("typed-record"),
                         reason: "segment typed cell has non-segment pointer".to_string(),
                     });
@@ -329,7 +329,7 @@ impl PageRecordStore {
                     checksum: 0,
                 })
             }
-            StorageClass::Catalog => Err(TridentError::InvalidConfig(
+            StorageClass::Catalog => Err(PraxisError::InvalidConfig(
                 "catalog-backed values are resolved through catalog stores".to_string(),
             )),
         }
@@ -385,7 +385,7 @@ impl PageRecordStore {
         let page = self.load_page(address.pid)?;
         page.get(address.sid)?
             .map(|bytes| bytes.to_vec())
-            .ok_or(TridentError::KeyNotFound)
+            .ok_or(PraxisError::KeyNotFound)
     }
 
     pub fn delete(&mut self, rid: Rid) -> Result<()> {
@@ -401,13 +401,13 @@ impl PageRecordStore {
         &self.directory
     }
 
-    pub fn layout(&self) -> &TridentLayout {
+    pub fn layout(&self) -> &PraxisLayout {
         &self.layout
     }
 
     fn write_slot(&mut self, slot: &RecordSlot) -> Result<SlotAddress> {
         let mut page = self.load_or_create_page(self.current_pid)?;
-        if let Err(TridentError::WriteStalled { .. }) = slot.install_into_page(&mut page) {
+        if let Err(PraxisError::WriteStalled { .. }) = slot.install_into_page(&mut page) {
             self.current_pid = Pid(self.current_pid.0.saturating_add(1));
             self.next_sid = 1;
             let sid = Sid(self.next_sid);
@@ -545,7 +545,7 @@ impl PageRecordStore {
         self.flush_critical_sidecar_maps()
     }
 
-    fn encode_typed_record(&self, fields: &[(FieldId, TridentValue)]) -> Result<Vec<u8>> {
+    fn encode_typed_record(&self, fields: &[(FieldId, PraxisValue)]) -> Result<Vec<u8>> {
         let mut cells = Vec::with_capacity(fields.len());
         for (field, value) in fields {
             let encoded = DataTypeRegistry::encode(value)?;
@@ -662,7 +662,7 @@ impl PageRecordStore {
 }
 
 fn corrupt<T>(path: &Path, reason: &str) -> Result<T> {
-    Err(TridentError::Corrupt {
+    Err(PraxisError::Corrupt {
         path: path.to_path_buf(),
         reason: reason.to_string(),
     })
@@ -751,7 +751,7 @@ fn decode_typed_record(bytes: &[u8], source: &Path) -> Result<Vec<TypedFieldCell
 fn pointer_family(pointer: Option<ExternalPointer>) -> Result<SegmentFamily> {
     match pointer {
         Some(ExternalPointer::Segment { family, .. }) => Ok(family),
-        _ => Err(TridentError::InvalidConfig(
+        _ => Err(PraxisError::InvalidConfig(
             "segment value did not include segment family".to_string(),
         )),
     }
@@ -833,7 +833,7 @@ fn read_external_pointer(
         })),
         3 => {
             let catalog = String::from_utf8(reader.read_len_bytes()?)
-                .map_err(|err| TridentError::InvalidConfig(err.to_string()))?;
+                .map_err(|err| PraxisError::InvalidConfig(err.to_string()))?;
             Ok(Some(ExternalPointer::Catalog {
                 catalog,
                 key: reader.read_u64()?,

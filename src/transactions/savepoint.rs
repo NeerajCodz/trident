@@ -1,8 +1,6 @@
-use crate::errors::{Result, TridentError};
-use crate::transactions::batch::{BatchOp, WriteBatch};
+use crate::errors::{PraxisError, Result};
+use crate::transactions::batch::WriteBatch;
 use crate::types::{ColumnFamily, Key, Value};
-use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 
 /// A named savepoint within a transaction.
 ///
@@ -76,7 +74,7 @@ impl SavepointTransaction {
             .savepoints
             .iter()
             .rposition(|sp| sp.name == name)
-            .ok_or_else(|| TridentError::TransactionConflict {
+            .ok_or_else(|| PraxisError::TransactionConflict {
                 cf: "default".into(),
                 key: format!("savepoint '{}' not found", name),
             })?;
@@ -99,7 +97,7 @@ impl SavepointTransaction {
             .savepoints
             .iter()
             .rposition(|sp| sp.name == name)
-            .ok_or_else(|| TridentError::TransactionConflict {
+            .ok_or_else(|| PraxisError::TransactionConflict {
                 cf: "default".into(),
                 key: format!("savepoint '{}' not found", name),
             })?;
@@ -167,6 +165,7 @@ fn now_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transactions::batch::BatchOp;
 
     #[test]
     fn test_savepoint_basic() {
@@ -233,10 +232,13 @@ mod tests {
 
         // Only the pre-savepoint op remains
         assert_eq!(txn.len(), 1);
-        assert_eq!(txn.batch().ops()[0], BatchOp::Put {
-            cf: ColumnFamily::default(),
-            key: b"keep".to_vec(),
-            value: b"this".to_vec(),
-        });
+        assert_eq!(
+            txn.batch().ops()[0],
+            BatchOp::Put {
+                cf: ColumnFamily::default(),
+                key: b"keep".to_vec(),
+                value: b"this".to_vec(),
+            }
+        );
     }
 }

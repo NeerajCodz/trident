@@ -1,10 +1,10 @@
 use crate::store::RecordId;
 use serde::{Deserialize, Serialize};
-use std::collections::BinaryHeap;
 use std::cmp::Ordering;
+use std::collections::BinaryHeap;
 
 const MAX_ENTRIES: usize = 16;
-const MIN_ENTRIES: usize = 4;
+const _MIN_ENTRIES: usize = 4;
 
 /// Axis-aligned bounding box for geospatial indexing.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -17,11 +17,21 @@ pub struct BoundingBox {
 
 impl BoundingBox {
     pub fn new(min_x: f64, min_y: f64, max_x: f64, max_y: f64) -> Self {
-        Self { min_x, min_y, max_x, max_y }
+        Self {
+            min_x,
+            min_y,
+            max_x,
+            max_y,
+        }
     }
 
     pub fn point(x: f64, y: f64) -> Self {
-        Self { min_x: x, min_y: y, max_x: x, max_y: y }
+        Self {
+            min_x: x,
+            min_y: y,
+            max_x: x,
+            max_y: y,
+        }
     }
 
     pub fn intersects(self, other: Self) -> bool {
@@ -95,7 +105,7 @@ impl RTreeNode {
         }
     }
 
-    fn is_leaf(&self) -> bool {
+    fn _is_leaf(&self) -> bool {
         matches!(self, RTreeNode::Leaf { .. })
     }
 }
@@ -107,16 +117,10 @@ impl RTreeNode {
 /// - Point containment queries
 /// - Nearest neighbor queries
 /// - K-nearest neighbor queries
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct PackedRTreeIndex {
     root: Option<RTreeNode>,
     size: usize,
-}
-
-impl Default for PackedRTreeIndex {
-    fn default() -> Self {
-        Self { root: None, size: 0 }
-    }
 }
 
 impl PackedRTreeIndex {
@@ -179,7 +183,10 @@ impl PackedRTreeIndex {
 
     fn insert_into(&mut self, root: RTreeNode, leaf: RTreeNode) -> RTreeNode {
         match root {
-            RTreeNode::Internal { bounds: _, mut children } => {
+            RTreeNode::Internal {
+                bounds: _,
+                mut children,
+            } => {
                 // Find best child to insert into
                 let best_idx = self.choose_subtree(&children, leaf.bounds());
                 let best_child = children.remove(best_idx);
@@ -191,17 +198,25 @@ impl PackedRTreeIndex {
                     let (group1, group2) = self.split_children(children);
                     let bounds1 = Self::compute_bounds_group(&group1);
                     let bounds2 = Self::compute_bounds_group(&group2);
-                    let new_root = RTreeNode::Internal {
+                    RTreeNode::Internal {
                         bounds: bounds1.merge(bounds2),
                         children: vec![
-                            RTreeNode::Internal { bounds: bounds1, children: group1 },
-                            RTreeNode::Internal { bounds: bounds2, children: group2 },
+                            RTreeNode::Internal {
+                                bounds: bounds1,
+                                children: group1,
+                            },
+                            RTreeNode::Internal {
+                                bounds: bounds2,
+                                children: group2,
+                            },
                         ],
-                    };
-                    new_root
+                    }
                 } else {
                     let new_bounds = Self::compute_bounds_group(&children);
-                    RTreeNode::Internal { bounds: new_bounds, children }
+                    RTreeNode::Internal {
+                        bounds: new_bounds,
+                        children,
+                    }
                 }
             }
             RTreeNode::Leaf { .. } => {
@@ -237,7 +252,8 @@ impl PackedRTreeIndex {
         for i in 0..children.len() {
             for j in (i + 1)..children.len() {
                 let merged = children[i].bounds().merge(children[j].bounds());
-                let waste = merged.area() - children[i].bounds().area() - children[j].bounds().area();
+                let waste =
+                    merged.area() - children[i].bounds().area() - children[j].bounds().area();
                 if waste > max_waste {
                     max_waste = waste;
                     seed1 = i;
@@ -304,10 +320,16 @@ impl PackedRTreeIndex {
             RTreeNode::Leaf { bounds, rid } => {
                 let dist = bounds.distance_to_point(x, y);
                 if heap.len() < k {
-                    heap.push(HeapEntry { rid: *rid, distance: dist });
+                    heap.push(HeapEntry {
+                        rid: *rid,
+                        distance: dist,
+                    });
                 } else if dist < heap.peek().unwrap().distance {
                     heap.pop();
-                    heap.push(HeapEntry { rid: *rid, distance: dist });
+                    heap.push(HeapEntry {
+                        rid: *rid,
+                        distance: dist,
+                    });
                 }
             }
             RTreeNode::Internal { children, .. } => {
@@ -372,13 +394,16 @@ impl Eq for HeapEntry {}
 
 impl PartialOrd for HeapEntry {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        // Reverse for min-heap behavior
-        other.distance.partial_cmp(&self.distance)
+        Some(self.cmp(other))
     }
 }
 
 impl Ord for HeapEntry {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.partial_cmp(other).unwrap_or(Ordering::Equal)
+        // Reverse for min-heap behavior
+        other
+            .distance
+            .partial_cmp(&self.distance)
+            .unwrap_or(Ordering::Equal)
     }
 }

@@ -1,4 +1,4 @@
-use crate::errors::{Result, TridentError};
+use crate::errors::{PraxisError, Result};
 use crate::io::crc32c;
 use crate::types::ValuePointer;
 use std::fs::{File, OpenOptions};
@@ -49,7 +49,7 @@ impl ValueLog {
         file.read_exact(&mut checksum_buf)?;
         let checksum = u32::from_le_bytes(checksum_buf);
         if len != pointer.len || checksum != pointer.checksum {
-            return Err(TridentError::Corrupt {
+            return Err(PraxisError::Corrupt {
                 path: path.to_path_buf(),
                 reason: "value pointer header mismatch".to_string(),
             });
@@ -57,7 +57,7 @@ impl ValueLog {
         let mut bytes = vec![0; len as usize];
         file.read_exact(&mut bytes)?;
         if crc32c(&bytes) != checksum {
-            return Err(TridentError::Corrupt {
+            return Err(PraxisError::Corrupt {
                 path: path.to_path_buf(),
                 reason: "value log checksum mismatch".to_string(),
             });

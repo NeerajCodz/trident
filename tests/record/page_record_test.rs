@@ -1,7 +1,7 @@
-use trident::datatype::{SegmentFamily, TridentValue};
-use trident::identity::{Aid, Cid, Eid, Fid, FieldId, Pid, Rid, Sid, SlotAddress};
-use trident::page::RecordPage;
-use trident::record::{PageRecordStore, RecordSlot, RidDirectory};
+use praxis::datatype::{PraxisValue, SegmentFamily};
+use praxis::identity::{Aid, Cid, Eid, Fid, FieldId, Pid, Rid, Sid, SlotAddress};
+use praxis::page::RecordPage;
+use praxis::record::{PageRecordStore, RecordSlot, RidDirectory};
 
 #[test]
 fn record_page_inserts_reads_deletes_and_defragments_slots() {
@@ -176,14 +176,14 @@ fn page_record_store_places_typed_values_by_storage_class() {
     let large_text = "x".repeat(300);
     let rid = store
         .put_typed(&[
-            (FieldId::Fixed(Aid(1)), TridentValue::Int4(92)),
+            (FieldId::Fixed(Aid(1)), PraxisValue::Int4(92)),
             (
                 FieldId::Fixed(Aid(2)),
-                TridentValue::Text(large_text.clone()),
+                PraxisValue::Text(large_text.clone()),
             ),
             (
                 FieldId::Fixed(Aid(3)),
-                TridentValue::Vec32 {
+                PraxisValue::Vec32 {
                     dims: 2,
                     data: vec![1.0, 2.0],
                 },

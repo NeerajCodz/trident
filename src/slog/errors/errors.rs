@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 #[derive(Debug, thiserror::Error)]
-pub enum TridentError {
+pub enum PraxisError {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
     #[error("serialization error: {0}")]
@@ -50,9 +50,9 @@ pub enum TridentError {
     Replication(String),
 }
 
-pub type Result<T> = std::result::Result<T, TridentError>;
+pub type Result<T> = std::result::Result<T, PraxisError>;
 
-impl TridentError {
+impl PraxisError {
     pub fn is_retryable(&self) -> bool {
         matches!(
             self,

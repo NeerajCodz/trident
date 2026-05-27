@@ -7,7 +7,7 @@
 pub mod binary;
 
 use super::{IndexPlugin, IndexStats};
-use crate::errors::{Result, TridentError};
+use crate::errors::{Result, PraxisError};
 use crate::io::{BinaryReader, BinaryWriter, crc32c};
 use crate::store::RecordId;
 use serde::{Deserialize, Serialize};
@@ -394,20 +394,20 @@ fn encode_binary_snapshot(on_disk: &OnDisk) -> Vec<u8> {
 
 fn decode_binary_snapshot(bytes: &[u8], source: &Path) -> Result<OnDisk> {
     if bytes.len() < 13 {
-        return Err(TridentError::Corrupt {
+        return Err(PraxisError::Corrupt {
             path: source.to_path_buf(),
             reason: "truncated LSM snapshot header".to_string(),
         });
     }
     let magic = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
     if magic != LSM_SNAPSHOT_MAGIC {
-        return Err(TridentError::Corrupt {
+        return Err(PraxisError::Corrupt {
             path: source.to_path_buf(),
             reason: "bad LSM snapshot magic".to_string(),
         });
     }
     if bytes[4] != LSM_SNAPSHOT_VERSION {
-        return Err(TridentError::Corrupt {
+        return Err(PraxisError::Corrupt {
             path: source.to_path_buf(),
             reason: format!("unsupported LSM snapshot version {}", bytes[4]),
         });
@@ -415,7 +415,7 @@ fn decode_binary_snapshot(bytes: &[u8], source: &Path) -> Result<OnDisk> {
     let payload_len = u32::from_le_bytes([bytes[5], bytes[6], bytes[7], bytes[8]]) as usize;
     let expected_crc = u32::from_le_bytes([bytes[9], bytes[10], bytes[11], bytes[12]]);
     if bytes.len() < 13 + payload_len {
-        return Err(TridentError::Corrupt {
+        return Err(PraxisError::Corrupt {
             path: source.to_path_buf(),
             reason: "truncated LSM snapshot payload".to_string(),
         });
@@ -423,7 +423,7 @@ fn decode_binary_snapshot(bytes: &[u8], source: &Path) -> Result<OnDisk> {
     let payload = &bytes[13..13 + payload_len];
     let actual_crc = crc32c(payload);
     if actual_crc != expected_crc {
-        return Err(TridentError::Corrupt {
+        return Err(PraxisError::Corrupt {
             path: source.to_path_buf(),
             reason: format!(
                 "LSM snapshot checksum mismatch: expected {expected_crc:#010x}, got {actual_crc:#010x}"
@@ -484,7 +484,7 @@ fn read_optional_bytes(reader: &mut BinaryReader<'_>) -> Result<Option<Vec<u8>>>
     match tag {
         0 => Ok(None),
         1 => Ok(Some(reader.read_len_bytes()?)),
-        _ => Err(TridentError::Corrupt {
+        _ => Err(PraxisError::Corrupt {
             path: PathBuf::from("lsm-snapshot"),
             reason: format!("invalid optional-bytes tag {tag}"),
         }),

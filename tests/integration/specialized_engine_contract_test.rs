@@ -1,4 +1,4 @@
-use trident::index::SpecializedEngineRegistry;
+use praxis::index::SpecializedEngineRegistry;
 
 #[test]
 fn specialized_engine_defaults_are_pointer_oriented_and_manifest_tracked() {

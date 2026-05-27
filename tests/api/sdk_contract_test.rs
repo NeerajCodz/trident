@@ -1,19 +1,19 @@
-use tempfile::tempdir;
-use trident::api::service::{
+use praxis::api::service::{
     BatchRecordInput, PrimitiveFieldBytes, PrimitiveFieldId, RequestContext,
 };
-use trident::identity::{Cid, Eid};
-use trident::sdk::{
-    GraphQlTridentClient, GrpcTridentClient, LocalPageTridentClient, LocalTridentClient,
-    RestTridentClient, SdkTransport,
+use praxis::identity::{Cid, Eid};
+use praxis::sdk::{
+    GraphQlpraxisClient, GrpcpraxisClient, LocalPagepraxisClient, LocalpraxisClient,
+    RestpraxisClient, SdkTransport,
 };
-use trident::store::{IndexInsert, StorageEngine};
+use praxis::store::{IndexInsert, StorageEngine};
+use tempfile::tempdir;
 
 #[test]
 fn local_sdk_executes_primitive_record_flow() {
     let dir = tempdir().unwrap();
     let engine = StorageEngine::open(dir.path(), 1024 * 1024).unwrap();
-    let client = LocalTridentClient::new(engine);
+    let client = LocalpraxisClient::new(engine);
 
     let put = client
         .put_record(
@@ -44,10 +44,10 @@ fn local_sdk_executes_primitive_batch_record_flow() {
         .register_index(
             "kv",
             "default",
-            Box::new(trident::storage::lsm::LsmIndex::open("kv", &index_dir).unwrap()),
+            Box::new(praxis::storage::lsm::LsmIndex::open("kv", &index_dir).unwrap()),
         )
         .unwrap();
-    let client = LocalTridentClient::new(engine);
+    let client = LocalpraxisClient::new(engine);
 
     let batch = client
         .put_record_batch(
@@ -91,7 +91,7 @@ fn local_sdk_executes_primitive_batch_record_flow() {
 #[test]
 fn local_page_sdk_executes_cid_eid_rid_flow() {
     let dir = tempdir().unwrap();
-    let client = LocalPageTridentClient::open(dir.path());
+    let client = LocalPagepraxisClient::open(dir.path());
 
     let put = client
         .put_page_record(
@@ -124,17 +124,17 @@ fn local_page_sdk_executes_cid_eid_rid_flow() {
 
 #[test]
 fn remote_sdk_clients_preserve_request_ids_and_transport() {
-    let rest = RestTridentClient::new("http://127.0.0.1:8080")
+    let rest = RestpraxisClient::new("http://127.0.0.1:8080")
         .put_record_request(RequestContext::new("rest-1"), b"body".to_vec());
-    let grpc = GrpcTridentClient::new("http://127.0.0.1:50051")
+    let grpc = GrpcpraxisClient::new("http://127.0.0.1:50051")
         .put_record_request(RequestContext::new("grpc-1"), b"body".to_vec());
-    let graphql = GraphQlTridentClient::new("http://127.0.0.1:8080/graphql")
+    let graphql = GraphQlpraxisClient::new("http://127.0.0.1:8080/graphql")
         .put_record_request(RequestContext::new("graphql-1"), b"body".to_vec());
-    let rest_batch = RestTridentClient::new("http://127.0.0.1:8080")
+    let rest_batch = RestpraxisClient::new("http://127.0.0.1:8080")
         .put_record_batch_request(RequestContext::new("rest-batch-1"), b"batch".to_vec());
-    let grpc_batch = GrpcTridentClient::new("http://127.0.0.1:50051")
+    let grpc_batch = GrpcpraxisClient::new("http://127.0.0.1:50051")
         .put_record_batch_request(RequestContext::new("grpc-batch-1"), b"batch".to_vec());
-    let graphql_batch = GraphQlTridentClient::new("http://127.0.0.1:8080/graphql")
+    let graphql_batch = GraphQlpraxisClient::new("http://127.0.0.1:8080/graphql")
         .put_record_batch_request(RequestContext::new("graphql-batch-1"), b"batch".to_vec());
 
     assert_eq!(rest.transport, SdkTransport::Rest);
@@ -147,7 +147,7 @@ fn remote_sdk_clients_preserve_request_ids_and_transport() {
     assert_eq!(rest_batch.request_id, "rest-batch-1");
     assert_eq!(
         grpc_batch.operation,
-        "trident.storage.v1.RecordService/PutRecordBatch"
+        "praxis.storage.v1.RecordService/PutRecordBatch"
     );
     assert_eq!(grpc_batch.request_id, "grpc-batch-1");
     assert_eq!(graphql_batch.operation, "mutation.putRecordBatch");

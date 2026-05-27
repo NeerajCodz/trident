@@ -1,6 +1,6 @@
 use crate::accel::Accelerator;
 use crate::cache::BlockCache;
-use crate::config::TridentConfig;
+use crate::config::PraxisConfig;
 use crate::disk::DiskLayout;
 use crate::maintenance::{MaintenanceRuntimeController, MaintenanceScheduler};
 use crate::manifest::Manifest;
@@ -9,7 +9,7 @@ use crate::memory::{MemTable, SnapshotManager};
 use crate::metrics::EngineMetrics;
 use crate::types::{ColumnFamily, Key, VersionedValue};
 use crate::wal::Wal;
-use parking_lot::{Condvar, Mutex};
+use parking_lot::{Condvar, Mutex, RwLock};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -30,14 +30,15 @@ pub(crate) struct GroupCommitCoordinator {
 }
 
 pub(crate) struct EngineInner {
-    pub(crate) config: TridentConfig,
+    pub(crate) config: PraxisConfig,
     pub(crate) layout: DiskLayout,
     pub(crate) manifest_store: ManifestStore,
     pub(crate) cas_serialization: Mutex<()>,
     pub(crate) manifest: Mutex<Manifest>,
     pub(crate) wal: Mutex<Wal>,
-    pub(crate) memtable: Mutex<MemTable>,
-    pub(crate) segment_index: Mutex<SegmentIndex>,
+    pub(crate) memtable: RwLock<MemTable>,
+    pub(crate) segment_index: RwLock<SegmentIndex>,
+    pub(crate) immutable_memtables: Mutex<Vec<MemTable>>,
     pub(crate) cache: Mutex<BlockCache<CacheKey>>,
     pub(crate) cache_bytes_by_cf: Mutex<BTreeMap<String, usize>>,
     pub(crate) scheduler: Mutex<MaintenanceScheduler>,

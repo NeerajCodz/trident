@@ -1,4 +1,4 @@
-use crate::errors::{Result, TridentError};
+use crate::errors::{PraxisError, Result};
 use std::io::{Cursor, Read};
 use std::path::PathBuf;
 
@@ -92,7 +92,7 @@ impl<'a> BinaryReader<'a> {
     fn read_exact(&mut self, buf: &mut [u8]) -> Result<()> {
         self.cursor
             .read_exact(buf)
-            .map_err(|_| TridentError::Corrupt {
+            .map_err(|_| PraxisError::Corrupt {
                 path: self.source.clone(),
                 reason: "unexpected end of data".to_string(),
             })

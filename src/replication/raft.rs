@@ -1,5 +1,4 @@
-use crate::errors::{Result, TridentError};
-use crate::replication::{LogPosition, ReplicationLog, ReplicationRecord};
+use crate::errors::{PraxisError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -61,7 +60,7 @@ pub struct AppendEntriesResponse {
 /// - Log replication
 /// - Safety guarantees
 ///
-/// The implementation is designed to work with Trident's existing
+/// The implementation is designed to work with praxis's existing
 /// FileReplicationLog for persistent storage.
 pub struct RaftNode {
     /// This node's ID
@@ -124,7 +123,9 @@ impl RaftNode {
     /// Append a new entry to the log (leader only).
     pub fn append_entry(&mut self, payload: Vec<u8>) -> Result<RaftEntry> {
         if self.state != RaftState::Leader {
-            return Err(TridentError::Replication("only leader can append entries".into()));
+            return Err(PraxisError::Replication(
+                "only leader can append entries".into(),
+            ));
         }
 
         let entry = RaftEntry {
@@ -146,8 +147,8 @@ impl RaftNode {
         let mut vote_granted = false;
 
         if request.term >= self.current_term {
-            let can_vote = self.voted_for.is_none()
-                || self.voted_for.as_ref() == Some(&request.candidate_id);
+            let can_vote =
+                self.voted_for.is_none() || self.voted_for.as_ref() == Some(&request.candidate_id);
 
             let log_ok = request.last_log_term > self.last_log_term()
                 || (request.last_log_term == self.last_log_term()
@@ -167,7 +168,10 @@ impl RaftNode {
     }
 
     /// Handle an append entries request from the leader.
-    pub fn handle_append_entries(&mut self, request: AppendEntriesRequest) -> AppendEntriesResponse {
+    pub fn handle_append_entries(
+        &mut self,
+        request: AppendEntriesRequest,
+    ) -> AppendEntriesResponse {
         // If term is newer, become follower
         if request.term > self.current_term {
             self.become_follower(request.term);
@@ -282,7 +286,7 @@ impl RaftNode {
 
     /// Get the majority count needed for quorum.
     pub fn quorum_size(&self) -> usize {
-        (self.peers.len() + 1) / 2 + 1
+        self.peers.len().div_ceil(2) + 1
     }
 
     /// Check if a log entry is committed (has been replicated to majority).
@@ -311,16 +315,15 @@ impl RaftNode {
         let next = self.next_index.get(peer).copied().unwrap_or(1);
         let prev_index = next.saturating_sub(1);
         let prev_term = if prev_index > 0 {
-            self.log.get((prev_index - 1) as usize).map(|e| e.term).unwrap_or(0)
+            self.log
+                .get((prev_index - 1) as usize)
+                .map(|e| e.term)
+                .unwrap_or(0)
         } else {
             0
         };
 
-        let entries: Vec<RaftEntry> = self.log
-            .iter()
-            .skip((next - 1) as usize)
-            .cloned()
-            .collect();
+        let entries: Vec<RaftEntry> = self.log.iter().skip((next - 1) as usize).cloned().collect();
 
         Some(AppendEntriesRequest {
             term: self.current_term,
@@ -345,13 +348,11 @@ impl RaftNode {
         let quorum_idx = sorted.len() - self.quorum_size();
         let new_commit = sorted[quorum_idx];
 
-        if new_commit > self.commit_index {
-            // Only commit if the entry is from current term
-            if let Some(entry) = self.log.get((new_commit - 1) as usize) {
-                if entry.term == self.current_term {
-                    self.commit_index = new_commit;
-                }
-            }
+        if new_commit > self.commit_index
+            && let Some(entry) = self.log.get((new_commit - 1) as usize)
+            && entry.term == self.current_term
+        {
+            self.commit_index = new_commit;
         }
     }
 }

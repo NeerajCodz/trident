@@ -190,4 +190,3 @@ impl RecordDirectory {
         self.forward.is_empty()
     }
 }
-

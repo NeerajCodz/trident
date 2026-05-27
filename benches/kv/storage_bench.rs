@@ -1,9 +1,9 @@
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use praxis::bench::{LatencyDistribution, WorkloadGenerator, WorkloadPattern};
+use praxis::storage::lsm::LsmIndex;
+use praxis::store::{IndexInsert, StorageEngine};
 use std::time::Duration;
 use tempfile::tempdir;
-use trident::bench::{LatencyDistribution, WorkloadGenerator, WorkloadPattern};
-use trident::storage::lsm::LsmIndex;
-use trident::store::{IndexInsert, StorageEngine};
 
 // ──────────────────────────────────────────────
 // Benchmark: Sequential Write Performance

@@ -1,4 +1,4 @@
-//! Advanced benchmarking framework for Trident - Phase 3B
+//! Advanced benchmarking framework for praxis - Phase 3B
 //!
 //! This module provides production-grade benchmarking infrastructure:
 //! - Performance result aggregation and statistical analysis

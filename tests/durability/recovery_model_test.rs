@@ -1,4 +1,4 @@
-use trident::recovery::{CrashFailure, RecoveryAction, RecoveryPlan, RecoveryStage};
+use praxis::recovery::{CrashFailure, RecoveryAction, RecoveryPlan, RecoveryStage};
 
 #[test]
 fn canonical_recovery_plan_matches_kernel_invariant_order() {

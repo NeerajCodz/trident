@@ -1,4 +1,4 @@
-use crate::errors::{Result, TridentError};
+use crate::errors::{PraxisError, Result};
 use crate::query::{Token, tokenize};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -83,6 +83,11 @@ pub enum QueryOperation {
     CreateCollection,
     AlterCollection,
     DropCollection,
+    ShowCollections,
+    ListRoles,
+    ListBranches,
+    CreateBranch,
+    DropBranch,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -236,9 +241,13 @@ impl QueryParser {
             parse_ddl_drop(trimmed)
         } else if upper.starts_with("FIND") || upper.starts_with("WATCH") {
             parse_pql(trimmed)
+        } else if upper.starts_with("SHOW") {
+            parse_show_command(trimmed)
+        } else if upper.starts_with("LIST") {
+            parse_list_command(trimmed)
         } else {
-            Err(TridentError::Query(
-                "expected SQL SELECT, DDL, or PQL FIND statement".into(),
+            Err(PraxisError::Query(
+                "expected SQL SELECT, DDL, PQL FIND, SHOW, or LIST statement".into(),
             ))
         }
     }
@@ -246,15 +255,17 @@ impl QueryParser {
 
 fn parse_sql(input: &str) -> Result<LogicalPlan> {
     let tokens = tokenize(input)?;
-    let from_index = tokens
-        .iter()
-        .position(|token| token.is_word("FROM"))
-        .ok_or_else(|| TridentError::Query("SQL query missing FROM".into()))?;
-    let collection = token_text(
-        tokens
-            .get(from_index + 1)
-            .ok_or_else(|| TridentError::Query("SQL query missing collection".into()))?,
-    );
+
+    // Support SELECT without FROM (e.g., SELECT 1, SELECT NOW())
+    let from_index = tokens.iter().position(|token| token.is_word("FROM"));
+    let collection = match from_index {
+        Some(idx) => token_text(
+            tokens
+                .get(idx + 1)
+                .ok_or_else(|| PraxisError::Query("SQL query missing collection".into()))?,
+        ),
+        None => "_scalar".to_string(),
+    };
     let filter_expression = tokens
         .iter()
         .position(|token| token.is_word("WHERE"))
@@ -289,15 +300,84 @@ fn parse_sql(input: &str) -> Result<LogicalPlan> {
     })
 }
 
+fn make_meta_plan(operation: QueryOperation, collection: &str) -> LogicalPlan {
+    LogicalPlan {
+        language: QueryLanguage::Sql,
+        operation,
+        collection: collection.to_string(),
+        filter: None,
+        filter_expression: None,
+        joins: Vec::new(),
+        full_text: None,
+        vector: None,
+        traversal: None,
+        rank_by: None,
+        order_by: None,
+        limit: None,
+        offset: None,
+        distinct: false,
+        group_by: None,
+        having: None,
+        as_of: None,
+        mutation: None,
+        ddl: None,
+        explain_analyze: false,
+        ctes: Vec::new(),
+        window_functions: Vec::new(),
+        params: QueryParams::default(),
+    }
+}
+
+fn parse_show_command(input: &str) -> Result<LogicalPlan> {
+    let tokens = tokenize(input)?;
+    let second = tokens.get(1).ok_or_else(|| {
+        PraxisError::Query("SHOW requires a target (e.g. SHOW COLLECTIONS)".into())
+    })?;
+    if second.is_word("COLLECTIONS") {
+        Ok(make_meta_plan(QueryOperation::ShowCollections, "_meta"))
+    } else {
+        Err(PraxisError::Query(format!(
+            "unsupported SHOW target: {}",
+            token_text(second)
+        )))
+    }
+}
+
+fn parse_list_command(input: &str) -> Result<LogicalPlan> {
+    let tokens = tokenize(input)?;
+    let second = tokens.get(1).ok_or_else(|| {
+        PraxisError::Query("LIST requires a target (e.g. LIST ROLES, LIST BRANCHES)".into())
+    })?;
+    if second.is_word("ROLES") {
+        Ok(make_meta_plan(QueryOperation::ListRoles, "_meta"))
+    } else if second.is_word("BRANCHES") {
+        Ok(make_meta_plan(QueryOperation::ListBranches, "_meta"))
+    } else {
+        Err(PraxisError::Query(format!(
+            "unsupported LIST target: {}",
+            token_text(second)
+        )))
+    }
+}
+
 fn parse_sql_mutation(input: &str) -> Result<LogicalPlan> {
     let tokens = tokenize(input)?;
     let command = tokens
         .first()
-        .ok_or_else(|| TridentError::Query("empty mutation".into()))?;
+        .ok_or_else(|| PraxisError::Query("empty mutation".into()))?;
     if command.is_word("INSERT") {
         let collection = token_text(expect_token(&tokens, 2, "INSERT INTO missing collection")?);
-        let key = token_text(expect_token(&tokens, 3, "INSERT INTO missing record key")?);
-        let set_index = find_token(&tokens, "SET")?;
+        let third = expect_token(&tokens, 3, "INSERT INTO missing record key or SET")?;
+        // If token 3 is SET, no explicit key was given — auto-generate one
+        let (key, set_index) = if third.is_word("SET") {
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos();
+            (format!("{ts:x}"), 3)
+        } else {
+            (token_text(third), find_token(&tokens, "SET")?)
+        };
         let attributes = parse_assignments(&tokens[set_index + 1..])?;
         mutation_plan(
             QueryOperation::Insert,
@@ -341,7 +421,7 @@ fn parse_sql_mutation(input: &str) -> Result<LogicalPlan> {
             MutationPlan::Delete { key },
         )
     } else {
-        Err(TridentError::Query("unsupported SQL mutation".into()))
+        Err(PraxisError::Query("unsupported SQL mutation".into()))
     }
 }
 
@@ -379,7 +459,7 @@ fn parse_pql(input: &str) -> Result<LogicalPlan> {
     let collection = tokens
         .get(1)
         .map(token_text)
-        .ok_or_else(|| TridentError::Query("PQL FIND missing collection".into()))?;
+        .ok_or_else(|| PraxisError::Query("PQL FIND missing collection".into()))?;
 
     let vector = tokens
         .iter()
@@ -509,7 +589,7 @@ fn parse_offset(tokens: &[Token]) -> Option<usize> {
 
 fn parse_group_by(tokens: &[Token]) -> Option<Vec<String>> {
     let gb_index = tokens.iter().position(|t| t.is_word("GROUP"))?;
-    if !tokens.get(gb_index + 1).map_or(false, |t| t.is_word("BY")) {
+    if !tokens.get(gb_index + 1).is_some_and(|t| t.is_word("BY")) {
         return None;
     }
     let mut attributes = Vec::new();
@@ -610,20 +690,55 @@ fn ddl_plan(operation: QueryOperation, collection: String, ddl: DdlPlan) -> Resu
 
 fn parse_ddl_create(input: &str) -> Result<LogicalPlan> {
     let tokens = tokenize(input)?;
+    // Handle CREATE BRANCH <name>
+    if tokens.iter().any(|t| t.is_word("BRANCH")) {
+        let branch_index = tokens.iter().position(|t| t.is_word("BRANCH")).unwrap();
+        let name = token_text(
+            tokens
+                .get(branch_index + 1)
+                .ok_or_else(|| PraxisError::Query("CREATE BRANCH missing name".into()))?,
+        );
+        return Ok(LogicalPlan {
+            language: QueryLanguage::Sql,
+            operation: QueryOperation::CreateBranch,
+            collection: name.clone(),
+            filter: None,
+            filter_expression: None,
+            joins: Vec::new(),
+            full_text: None,
+            vector: None,
+            traversal: None,
+            rank_by: None,
+            order_by: None,
+            limit: None,
+            offset: None,
+            distinct: false,
+            group_by: None,
+            having: None,
+            as_of: None,
+            mutation: None,
+            ddl: None,
+            explain_analyze: false,
+            ctes: Vec::new(),
+            window_functions: Vec::new(),
+            params: QueryParams::default(),
+        });
+    }
     let col_index = tokens
         .iter()
         .position(|t| t.is_word("COLLECTION"))
-        .ok_or_else(|| TridentError::Query("CREATE missing COLLECTION keyword".into()))?;
+        .ok_or_else(|| PraxisError::Query("CREATE missing COLLECTION keyword".into()))?;
     let name = token_text(
         tokens
             .get(col_index + 1)
-            .ok_or_else(|| TridentError::Query("CREATE COLLECTION missing name".into()))?,
+            .ok_or_else(|| PraxisError::Query("CREATE COLLECTION missing name".into()))?,
     );
-    let attributes = if let Some(paren_index) = tokens.iter().position(|t| matches!(t, Token::Symbol('('))) {
-        parse_attribute_defs(&tokens[paren_index + 1..])?
-    } else {
-        Vec::new()
-    };
+    let attributes =
+        if let Some(paren_index) = tokens.iter().position(|t| matches!(t, Token::Symbol('('))) {
+            parse_attribute_defs(&tokens[paren_index + 1..])?
+        } else {
+            Vec::new()
+        };
     ddl_plan(
         QueryOperation::CreateCollection,
         name.clone(),
@@ -636,11 +751,11 @@ fn parse_ddl_alter(input: &str) -> Result<LogicalPlan> {
     let col_index = tokens
         .iter()
         .position(|t| t.is_word("COLLECTION"))
-        .ok_or_else(|| TridentError::Query("ALTER missing COLLECTION keyword".into()))?;
+        .ok_or_else(|| PraxisError::Query("ALTER missing COLLECTION keyword".into()))?;
     let name = token_text(
         tokens
             .get(col_index + 1)
-            .ok_or_else(|| TridentError::Query("ALTER COLLECTION missing name".into()))?,
+            .ok_or_else(|| PraxisError::Query("ALTER COLLECTION missing name".into()))?,
     );
     let mut actions = Vec::new();
     let mut cursor = col_index + 2;
@@ -653,13 +768,13 @@ fn parse_ddl_alter(input: &str) -> Result<LogicalPlan> {
             let attr_name = token_text(
                 tokens
                     .get(cursor)
-                    .ok_or_else(|| TridentError::Query("ADD missing attribute name".into()))?,
+                    .ok_or_else(|| PraxisError::Query("ADD missing attribute name".into()))?,
             );
             cursor += 1;
             let type_name = token_text(
                 tokens
                     .get(cursor)
-                    .ok_or_else(|| TridentError::Query("ADD missing attribute type".into()))?,
+                    .ok_or_else(|| PraxisError::Query("ADD missing attribute type".into()))?,
             );
             cursor += 1;
             let nullable = if cursor < tokens.len() && tokens[cursor].is_word("NULLABLE") {
@@ -681,7 +796,7 @@ fn parse_ddl_alter(input: &str) -> Result<LogicalPlan> {
             let attr_name = token_text(
                 tokens
                     .get(cursor)
-                    .ok_or_else(|| TridentError::Query("DROP missing attribute name".into()))?,
+                    .ok_or_else(|| PraxisError::Query("DROP missing attribute name".into()))?,
             );
             cursor += 1;
             actions.push(AlterAction::DropAttribute { name: attr_name });
@@ -698,14 +813,48 @@ fn parse_ddl_alter(input: &str) -> Result<LogicalPlan> {
 
 fn parse_ddl_drop(input: &str) -> Result<LogicalPlan> {
     let tokens = tokenize(input)?;
+    // Handle DROP BRANCH <name>
+    if tokens.iter().any(|t| t.is_word("BRANCH")) {
+        let branch_index = tokens.iter().position(|t| t.is_word("BRANCH")).unwrap();
+        let name = token_text(
+            tokens
+                .get(branch_index + 1)
+                .ok_or_else(|| PraxisError::Query("DROP BRANCH missing name".into()))?,
+        );
+        return Ok(LogicalPlan {
+            language: QueryLanguage::Sql,
+            operation: QueryOperation::DropBranch,
+            collection: name.clone(),
+            filter: None,
+            filter_expression: None,
+            joins: Vec::new(),
+            full_text: None,
+            vector: None,
+            traversal: None,
+            rank_by: None,
+            order_by: None,
+            limit: None,
+            offset: None,
+            distinct: false,
+            group_by: None,
+            having: None,
+            as_of: None,
+            mutation: None,
+            ddl: None,
+            explain_analyze: false,
+            ctes: Vec::new(),
+            window_functions: Vec::new(),
+            params: QueryParams::default(),
+        });
+    }
     let col_index = tokens
         .iter()
         .position(|t| t.is_word("COLLECTION"))
-        .ok_or_else(|| TridentError::Query("DROP missing COLLECTION keyword".into()))?;
+        .ok_or_else(|| PraxisError::Query("DROP missing COLLECTION keyword".into()))?;
     let name = token_text(
         tokens
             .get(col_index + 1)
-            .ok_or_else(|| TridentError::Query("DROP COLLECTION missing name".into()))?,
+            .ok_or_else(|| PraxisError::Query("DROP COLLECTION missing name".into()))?,
     );
     ddl_plan(
         QueryOperation::DropCollection,
@@ -750,14 +899,14 @@ fn parse_attribute_defs(tokens: &[Token]) -> Result<Vec<AttributeDdl>> {
 fn expect_token<'a>(tokens: &'a [Token], index: usize, message: &str) -> Result<&'a Token> {
     tokens
         .get(index)
-        .ok_or_else(|| TridentError::Query(message.into()))
+        .ok_or_else(|| PraxisError::Query(message.into()))
 }
 
 fn find_token(tokens: &[Token], needle: &str) -> Result<usize> {
     tokens
         .iter()
         .position(|token| token.is_word(needle))
-        .ok_or_else(|| TridentError::Query(format!("missing {needle} clause")))
+        .ok_or_else(|| PraxisError::Query(format!("missing {needle} clause")))
 }
 
 fn parse_assignments(tokens: &[Token]) -> Result<BTreeMap<String, Value>> {
@@ -769,7 +918,7 @@ fn parse_assignments(tokens: &[Token]) -> Result<BTreeMap<String, Value>> {
         .filter(|part| !part.is_empty())
     {
         let Some((key, raw_value)) = assignment.split_once('=') else {
-            return Err(TridentError::Query(format!(
+            return Err(PraxisError::Query(format!(
                 "assignment '{assignment}' must use key=value"
             )));
         };
@@ -822,7 +971,7 @@ fn parse_joins(tokens: &[Token]) -> Result<Vec<JoinClause>> {
             .iter()
             .position(|token| token.is_word("ON"))
             .map(|relative| index + relative)
-            .ok_or_else(|| TridentError::Query("JOIN missing ON".into()))?;
+            .ok_or_else(|| PraxisError::Query("JOIN missing ON".into()))?;
         joins.push(JoinClause {
             collection,
             left_attribute: token_text(expect_token(
@@ -886,8 +1035,26 @@ impl<'a> BooleanParser<'a> {
             self.expect_symbol(')')?;
             return Ok(expression);
         }
+        let attribute = token_text(self.expect("WHERE predicate missing attribute")?);
+        // Handle IS NULL / IS NOT NULL
+        if self.consume_word("IS") {
+            if self.consume_word("NOT") {
+                self.expect("NULL")?;
+                return Ok(BooleanExpression::Predicate(Predicate {
+                    attribute,
+                    operator: "is_not_null".to_string(),
+                    value: String::new(),
+                }));
+            }
+            self.expect("NULL")?;
+            return Ok(BooleanExpression::Predicate(Predicate {
+                attribute,
+                operator: "is_null".to_string(),
+                value: String::new(),
+            }));
+        }
         Ok(BooleanExpression::Predicate(Predicate {
-            attribute: token_text(self.expect("WHERE predicate missing attribute")?),
+            attribute,
             operator: token_text(self.expect("WHERE predicate missing operator")?),
             value: token_text(self.expect("WHERE predicate missing value")?),
         }))
@@ -919,7 +1086,7 @@ impl<'a> BooleanParser<'a> {
         if self.consume_symbol(expected) {
             Ok(())
         } else {
-            Err(TridentError::Query(format!("expected '{expected}'")))
+            Err(PraxisError::Query(format!("expected '{expected}'")))
         }
     }
 
@@ -927,7 +1094,7 @@ impl<'a> BooleanParser<'a> {
         let token = self
             .tokens
             .get(self.cursor)
-            .ok_or_else(|| TridentError::Query(message.into()))?;
+            .ok_or_else(|| PraxisError::Query(message.into()))?;
         self.cursor += 1;
         Ok(token)
     }
@@ -963,23 +1130,19 @@ fn parse_cte(input: &str) -> Result<LogicalPlan> {
         let name = token_text(
             tokens
                 .get(cursor)
-                .ok_or_else(|| TridentError::Query("CTE missing name".into()))?,
+                .ok_or_else(|| PraxisError::Query("CTE missing name".into()))?,
         );
         cursor += 1;
 
         // AS keyword
-        if !tokens
-            .get(cursor)
-            .map(|t| t.is_word("AS"))
-            .unwrap_or(false)
-        {
-            return Err(TridentError::Query("CTE missing AS keyword".into()));
+        if !tokens.get(cursor).map(|t| t.is_word("AS")).unwrap_or(false) {
+            return Err(PraxisError::Query("CTE missing AS keyword".into()));
         }
         cursor += 1;
 
         // Opening paren
         if !matches!(tokens.get(cursor), Some(Token::Symbol('('))) {
-            return Err(TridentError::Query("CTE missing opening parenthesis".into()));
+            return Err(PraxisError::Query("CTE missing opening parenthesis".into()));
         }
         cursor += 1;
 
@@ -1002,7 +1165,11 @@ fn parse_cte(input: &str) -> Result<LogicalPlan> {
 
         // Parse the inner query
         let query_tokens = &tokens[query_start..cursor];
-        let query_str = query_tokens.iter().map(token_text).collect::<Vec<_>>().join(" ");
+        let query_str = query_tokens
+            .iter()
+            .map(token_text)
+            .collect::<Vec<_>>()
+            .join(" ");
         let inner_query = QueryParser::parse(&query_str)?;
 
         ctes.push(CteDefinition {
@@ -1064,9 +1231,7 @@ pub fn parse_window_functions(tokens: &[Token]) -> Vec<WindowFunction> {
                             func_start -= 1;
                         }
                     }
-                    if func_start > 0 {
-                        func_start -= 1; // include function name
-                    }
+                    func_start = func_start.saturating_sub(1); // include function name
                 }
             }
 
@@ -1135,17 +1300,9 @@ pub fn parse_window_functions(tokens: &[Token]) -> Vec<WindowFunction> {
             }
 
             // Parse optional AS alias
-            let alias = if tokens
-                .get(cursor)
-                .map(|t| t.is_word("AS"))
-                .unwrap_or(false)
-            {
+            let alias = if tokens.get(cursor).map(|t| t.is_word("AS")).unwrap_or(false) {
                 cursor += 1;
-                token_text(
-                    tokens
-                        .get(cursor)
-                        .unwrap_or(&Token::Word(String::new())),
-                )
+                token_text(tokens.get(cursor).unwrap_or(&Token::Word(String::new())))
             } else {
                 func_name.clone()
             };
@@ -1194,7 +1351,8 @@ mod tests {
 
     #[test]
     fn test_parse_simple_cte() {
-        let sql = "WITH active AS (SELECT * FROM users WHERE status = 'active') SELECT * FROM active";
+        let sql =
+            "WITH active AS (SELECT * FROM users WHERE status = 'active') SELECT * FROM active";
         let plan = QueryParser::parse(sql).unwrap();
         assert_eq!(plan.ctes.len(), 1);
         assert_eq!(plan.ctes[0].name, "active");
@@ -1225,7 +1383,10 @@ mod tests {
         params.positional.push("42".to_string());
         params.positional.push("'Alice'".to_string());
         let result = substitute_params(query, &params);
-        assert_eq!(result, "SELECT * FROM users WHERE id = 42 AND name = 'Alice'");
+        assert_eq!(
+            result,
+            "SELECT * FROM users WHERE id = 42 AND name = 'Alice'"
+        );
     }
 
     #[test]

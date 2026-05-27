@@ -1,13 +1,13 @@
-//! Stress and soak tests for Trident storage engine.
+//! Stress and soak tests for praxis storage engine.
 //!
 //! These tests validate performance, correctness, and durability under
 //! sustained load, variable workloads, and challenging scenarios.
 
+use praxis::index::BTreeIndex;
+use praxis::storage::lsm::LsmIndex;
+use praxis::store::{BatchRecord, IndexInsert, RecordId, StorageEngine};
 use std::time::{Duration, Instant};
 use tempfile::tempdir;
-use trident::index::BTreeIndex;
-use trident::storage::lsm::LsmIndex;
-use trident::store::{BatchRecord, IndexInsert, RecordId, StorageEngine};
 
 fn full_stress_enabled() -> bool {
     std::env::var("TRIDENT_FULL_STRESS")

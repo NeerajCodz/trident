@@ -3,12 +3,6 @@ use crate::document::RecordId;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 
-impl Default for DistanceMetric {
-    fn default() -> Self {
-        Self::Cosine
-    }
-}
-
 /// Dot product of two vectors.
 fn dot_product(left: &[f32], right: &[f32]) -> f32 {
     left.iter().zip(right).map(|(l, r)| l * r).sum()
@@ -103,6 +97,36 @@ impl VectorIndex {
 
     pub fn is_empty(&self) -> bool {
         self.values.is_empty()
+    }
+
+    pub fn remove(&mut self, id: &RecordId) {
+        if self.values.remove(id).is_none() {
+            return;
+        }
+
+        for layer in &mut self.hnsw_layers {
+            layer.retain(|n| n != id);
+        }
+        self.hnsw_neighbors.remove(id);
+        for neighbors in self.hnsw_neighbors.values_mut() {
+            for layer_neighbors in neighbors.values_mut() {
+                layer_neighbors.retain(|n| n != id);
+            }
+        }
+
+        if self.hnsw_entry_point.as_ref() == Some(id) {
+            self.hnsw_entry_point = self.values.keys().next().cloned();
+            if self.hnsw_entry_point.is_none() {
+                self.hnsw_max_level = 0;
+            }
+        }
+
+        while self.hnsw_layers.last().is_some_and(|l| l.is_empty()) {
+            self.hnsw_layers.pop();
+            if self.hnsw_max_level > 0 {
+                self.hnsw_max_level -= 1;
+            }
+        }
     }
 
     fn distance(&self, a: &[f32], b: &[f32]) -> f32 {
@@ -201,8 +225,7 @@ impl VectorIndex {
                             Some((cid.clone(), dist))
                         })
                         .collect();
-                    let pruned =
-                        self.select_neighbors_heuristic(&nq, &scored_conns, m);
+                    let pruned = self.select_neighbors_heuristic(&nq, &scored_conns, m);
                     self.hnsw_neighbors
                         .entry(neighbor.clone())
                         .or_default()
@@ -252,10 +275,11 @@ impl VectorIndex {
 
             // If furthest result is closer than closest candidate, stop
             results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(Ordering::Equal));
-            if let Some(furthest) = results.first() {
-                if c_dist > furthest.1 && results.len() >= ef {
-                    break;
-                }
+            if let Some(furthest) = results.first()
+                && c_dist > furthest.1
+                && results.len() >= ef
+            {
+                break;
             }
 
             // Explore neighbors

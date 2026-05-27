@@ -1,6 +1,6 @@
 use crate::config::{
     CompactionStrategy, Compression, DEFAULT_LARGE_VALUE_THRESHOLD,
-    DEFAULT_MEMTABLE_FLUSH_THRESHOLD_BYTES, MemTableKind, PersistedEngineConfig, TridentConfig,
+    DEFAULT_MEMTABLE_FLUSH_THRESHOLD_BYTES, MemTableKind, PersistedEngineConfig, PraxisConfig,
 };
 use serde::{Deserialize, Serialize};
 
@@ -23,7 +23,7 @@ pub struct Manifest {
 }
 
 impl Manifest {
-    pub fn fresh(config: &TridentConfig) -> Self {
+    pub fn fresh(config: &PraxisConfig) -> Self {
         Self {
             format_version: 1,
             effective_config: config.persisted(),

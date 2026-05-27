@@ -1,5 +1,5 @@
 use crate::config::WalSyncPolicy;
-use crate::errors::{Result, TridentError};
+use crate::errors::{PraxisError, Result};
 use crate::identity::{Aid, Cid, Did, Eid, FieldId, Rid};
 use crate::io::{BinaryReader, BinaryWriter, crc32c};
 use std::fs::{File, OpenOptions};
@@ -323,7 +323,7 @@ fn file_payload_offset(bytes: &[u8], path: &Path) -> Result<usize> {
 }
 
 fn corrupt<T>(path: &Path, reason: &str) -> Result<T> {
-    Err(TridentError::Corrupt {
+    Err(PraxisError::Corrupt {
         path: path.to_path_buf(),
         reason: reason.to_string(),
     })

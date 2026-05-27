@@ -1,7 +1,7 @@
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use praxis::RecordId;
+use praxis::index::hnsw::adjacency::AdjacencyIndex;
 use tempfile::tempdir;
-use trident::RecordId;
-use trident::index::hnsw::adjacency::AdjacencyIndex;
 
 fn bench_adjacency_one_hop(c: &mut Criterion) {
     let dir = tempdir().unwrap();

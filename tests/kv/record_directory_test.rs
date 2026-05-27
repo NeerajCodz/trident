@@ -1,8 +1,8 @@
+use praxis::index::{BTreeIndex, IndexPlugin, IndexStorageLayout};
+use praxis::kernel::StorageKernel;
+use praxis::storage::lsm::LsmIndex;
+use praxis::store::{RecordDirectory, RecordStore, StorageEngine};
 use tempfile::tempdir;
-use trident::index::{BTreeIndex, IndexPlugin, IndexStorageLayout};
-use trident::kernel::StorageKernel;
-use trident::storage::lsm::LsmIndex;
-use trident::store::{RecordDirectory, RecordStore, StorageEngine};
 
 #[test]
 fn record_directory_is_the_only_recordid_resolver() {
@@ -25,7 +25,7 @@ fn record_directory_is_the_only_recordid_resolver() {
 #[test]
 fn record_directory_alias_preserves_pointer_accounting_contract() {
     let mut directory = RecordDirectory::default();
-    let rid = directory.allocate(trident::store::PhysicalLocation {
+    let rid = directory.allocate(praxis::store::PhysicalLocation {
         segment_id: 7,
         record_offset: 11,
         length: 19,

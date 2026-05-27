@@ -4,7 +4,7 @@ use super::manifest::{
 use super::wal::{StorageWal, StorageWalEntry, StorageWalOperation, StorageWalOptions};
 use super::{CompactionStats, PhysicalLocation, PreparedCompaction, RecordId, RecordStore};
 use crate::cache::BlockCache;
-use crate::errors::{Result, TridentError};
+use crate::errors::{PraxisError, Result};
 use crate::index::{IndexPlugin, IndexStats};
 use crate::kernel::{
     KernelCompactionReport, KernelInvariantValidator, KernelSnapshot, KernelStorageReport,
@@ -377,7 +377,7 @@ impl StorageEngine {
         )?;
         for (insert, wal_entry) in index_inserts.iter().zip(entries.iter().skip(1)) {
             let plugin = self.indexes.get_mut(&insert.index_type).ok_or_else(|| {
-                TridentError::InvalidConfig(format!("unknown index plugin: {}", insert.index_type))
+                PraxisError::InvalidConfig(format!("unknown index plugin: {}", insert.index_type))
             })?;
             plugin.put_with_sequence(&insert.key, rid, wal_entry.sequence)?;
         }
@@ -465,7 +465,7 @@ impl StorageEngine {
             for insert in record.index_inserts {
                 let wal_entry = &entries[entry_cursor];
                 let plugin = self.indexes.get_mut(&insert.index_type).ok_or_else(|| {
-                    TridentError::InvalidConfig(format!(
+                    PraxisError::InvalidConfig(format!(
                         "unknown index plugin: {}",
                         insert.index_type
                     ))
@@ -501,7 +501,7 @@ impl StorageEngine {
         self.ensure_indexes_exist(std::iter::once(index_type))?;
         if !self.store.contains(rid) {
             self.metrics.write_errors.fetch_add(1, Ordering::Relaxed);
-            return Err(TridentError::KeyNotFound);
+            return Err(PraxisError::KeyNotFound);
         }
         let sequence = self.append_wal(StorageWalEntry {
             sequence: 0,
@@ -511,7 +511,7 @@ impl StorageEngine {
             operation: StorageWalOperation::Put,
         })?;
         let plugin = self.indexes.get_mut(index_type).ok_or_else(|| {
-            TridentError::InvalidConfig(format!("unknown index plugin: {index_type}"))
+            PraxisError::InvalidConfig(format!("unknown index plugin: {index_type}"))
         })?;
         plugin.put_with_sequence(key, rid, sequence)?;
         self.metrics.writes.fetch_add(1, Ordering::Relaxed);
@@ -530,7 +530,7 @@ impl StorageEngine {
             operation: StorageWalOperation::Delete,
         })?;
         let plugin = self.indexes.get_mut(index_type).ok_or_else(|| {
-            TridentError::InvalidConfig(format!("unknown index plugin: {index_type}"))
+            PraxisError::InvalidConfig(format!("unknown index plugin: {index_type}"))
         })?;
         plugin.delete_with_sequence(key, sequence)?;
         self.metrics.deletes.fetch_add(1, Ordering::Relaxed);
@@ -540,7 +540,7 @@ impl StorageEngine {
 
     pub fn lookup_rid(&self, index_type: &str, key: &[u8]) -> Result<Option<RecordId>> {
         let plugin = self.indexes.get(index_type).ok_or_else(|| {
-            TridentError::InvalidConfig(format!("unknown index plugin: {index_type}"))
+            PraxisError::InvalidConfig(format!("unknown index plugin: {index_type}"))
         })?;
         Ok(plugin.get(key))
     }
@@ -552,7 +552,7 @@ impl StorageEngine {
         sequence: u64,
     ) -> Result<Option<RecordId>> {
         let plugin = self.indexes.get(index_type).ok_or_else(|| {
-            TridentError::InvalidConfig(format!("unknown index plugin: {index_type}"))
+            PraxisError::InvalidConfig(format!("unknown index plugin: {index_type}"))
         })?;
         Ok(plugin.get_at(key, sequence))
     }
@@ -577,7 +577,7 @@ impl StorageEngine {
         match rid {
             Some(id) => match self.fetch(id) {
                 Ok(value) => Ok(Some(value)),
-                Err(TridentError::KeyNotFound) => Ok(None),
+                Err(PraxisError::KeyNotFound) => Ok(None),
                 Err(err) => Err(err),
             },
             None => Ok(None),
@@ -678,7 +678,7 @@ impl StorageEngine {
         for index_name in index_types {
             let index_name = index_name.as_ref();
             let plugin = self.indexes.get_mut(index_name).ok_or_else(|| {
-                TridentError::InvalidConfig(format!("unknown index plugin: {index_name}"))
+                PraxisError::InvalidConfig(format!("unknown index plugin: {index_name}"))
             })?;
             let before = plugin.stats();
             plugin.compact()?;
@@ -940,7 +940,7 @@ impl StorageEngine {
     ) -> Result<()> {
         for index_type in index_types {
             if !self.indexes.contains_key(index_type) {
-                return Err(TridentError::InvalidConfig(format!(
+                return Err(PraxisError::InvalidConfig(format!(
                     "unknown index plugin: {index_type}"
                 )));
             }

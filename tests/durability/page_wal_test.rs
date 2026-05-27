@@ -1,12 +1,12 @@
-use trident::config::WalSyncPolicy;
-use trident::identity::{Aid, Cid, Eid, FieldId, Rid};
-use trident::record::PageRecordStore;
-use trident::wal::{PageWal, PageWalMutation, PageWalRecord};
+use praxis::config::WalSyncPolicy;
+use praxis::identity::{Aid, Cid, Eid, FieldId, Rid};
+use praxis::record::PageRecordStore;
+use praxis::wal::{PageWal, PageWalMutation, PageWalRecord};
 
 #[test]
 fn page_wal_roundtrips_put_and_delete_records() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join(".trident").join("logs").join("page.wal");
+    let path = dir.path().join(".praxis").join("logs").join("page.wal");
     let mut wal = PageWal::open(&path, WalSyncPolicy::EveryBatch).unwrap();
 
     let put = wal
@@ -93,7 +93,7 @@ fn page_record_store_replays_delete_idempotently() {
 #[test]
 fn page_wal_replay_ignores_torn_tail_record() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join(".trident").join("logs").join("page.wal");
+    let path = dir.path().join(".praxis").join("logs").join("page.wal");
     let mut wal = PageWal::open(&path, WalSyncPolicy::EveryBatch).unwrap();
     let put = wal
         .append_put(

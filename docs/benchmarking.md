@@ -1,6 +1,6 @@
 # Benchmarking and Heavy-Load Validation
 
-Trident benchmark coverage is organized by workload type:
+Praxis benchmark coverage is organized by workload type:
 
 - `benches/accel/*_bench.rs`: CPU and GPU acceleration paths.
 - `benches/kv/*_bench.rs`: LSM and key-value storage behavior.

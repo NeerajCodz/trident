@@ -1,4 +1,4 @@
-use trident::api::grpc::{GrpcService, QUERY_PROTO, STORAGE_PROTO};
+use praxis::api::grpc::{GrpcService, QUERY_PROTO, STORAGE_PROTO};
 
 #[test]
 fn grpc_proto_contracts_are_embedded() {

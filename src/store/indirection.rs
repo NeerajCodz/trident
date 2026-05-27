@@ -1,5 +1,5 @@
 use super::record_id::RecordId;
-use crate::errors::{Result, TridentError};
+use crate::errors::{PraxisError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::OpenOptions;
@@ -61,7 +61,7 @@ impl IndirectionTable {
             .get(&rid.0)
             .filter(|e| e.alive)
             .map(|e| e.location)
-            .ok_or(TridentError::KeyNotFound)
+            .ok_or(PraxisError::KeyNotFound)
     }
 
     /// Mark `rid` as deleted; its space will be reclaimed during compaction.
@@ -69,7 +69,7 @@ impl IndirectionTable {
         let entry = self
             .entries
             .get_mut(&rid.0)
-            .ok_or(TridentError::KeyNotFound)?;
+            .ok_or(PraxisError::KeyNotFound)?;
         entry.alive = false;
         Ok(())
     }

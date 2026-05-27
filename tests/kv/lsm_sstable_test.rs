@@ -1,6 +1,6 @@
+use praxis::storage::lsm::sstable::{SstableOptions, SstableReader, SstableWriter};
+use praxis::store::RecordId;
 use tempfile::tempdir;
-use trident::storage::lsm::sstable::{SstableOptions, SstableReader, SstableWriter};
-use trident::store::RecordId;
 
 #[test]
 fn sstable_roundtrips_sorted_point_and_range_reads() {

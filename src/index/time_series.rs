@@ -42,7 +42,10 @@ impl TimePartition {
         }
         let point = TimeSeriesPoint { timestamp_ms, rid };
         // Insert in sorted order
-        let pos = self.points.binary_search_by(|p| p.timestamp_ms.cmp(&timestamp_ms)).unwrap_or_else(|i| i);
+        let pos = self
+            .points
+            .binary_search_by(|p| p.timestamp_ms.cmp(&timestamp_ms))
+            .unwrap_or_else(|i| i);
         self.points.insert(pos, point);
         true
     }
@@ -59,21 +62,12 @@ impl TimePartition {
 
     /// Query the most recent N points.
     pub fn latest(&self, n: usize) -> Vec<RecordId> {
-        self.points
-            .iter()
-            .rev()
-            .take(n)
-            .map(|p| p.rid)
-            .collect()
+        self.points.iter().rev().take(n).map(|p| p.rid).collect()
     }
 
     /// Query the oldest N points.
     pub fn oldest(&self, n: usize) -> Vec<RecordId> {
-        self.points
-            .iter()
-            .take(n)
-            .map(|p| p.rid)
-            .collect()
+        self.points.iter().take(n).map(|p| p.rid).collect()
     }
 
     /// Count points in a time range.
@@ -138,7 +132,10 @@ impl TimeSeriesIndex {
     pub fn insert(&mut self, timestamp_ms: i64, rid: RecordId) {
         let partition_start = self.partition_key(timestamp_ms);
         let partition = self.partitions.entry(partition_start).or_insert_with(|| {
-            TimePartition::new(partition_start, partition_start + self.partition_duration_ms)
+            TimePartition::new(
+                partition_start,
+                partition_start + self.partition_duration_ms,
+            )
         });
         partition.insert(timestamp_ms, rid);
 

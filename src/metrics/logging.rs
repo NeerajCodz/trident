@@ -1,4 +1,4 @@
-//! Structured logging for Trident storage engine.
+//! Structured logging for praxis storage engine.
 //!
 //! Provides environment-configurable logging with support for JSON output,
 //! different log levels, and contextual metadata for debugging and production monitoring.

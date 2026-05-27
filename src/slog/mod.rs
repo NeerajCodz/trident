@@ -5,7 +5,7 @@ pub mod logger;
 pub mod wide;
 
 pub use context::Context;
-pub use errors::{Result, TridentError};
+pub use errors::{PraxisError, Result};
 pub use level::Level;
 pub use logger::Logger;
 pub use wide::WideEvent;

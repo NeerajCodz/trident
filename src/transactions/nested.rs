@@ -1,7 +1,6 @@
-use crate::errors::{Result, TridentError};
+use crate::errors::{PraxisError, Result};
 use crate::transactions::batch::WriteBatch;
-use crate::types::{ColumnFamily, Key, SequenceNumber, Value};
-use std::collections::BTreeMap;
+use crate::types::{ColumnFamily, Key, Value};
 
 /// Nested transaction support.
 ///
@@ -34,14 +33,14 @@ pub struct NestedTransaction {
     /// Child transactions (for nested commit semantics).
     children: Vec<NestedChild>,
     /// Parent snapshot (inherited by children).
-    parent_snapshot: Option<u64>,
+    _parent_snapshot: Option<u64>,
     /// Whether this transaction has been committed or rolled back.
     state: TransactionState,
 }
 
 #[derive(Clone, Debug)]
 struct NestedChild {
-    txn_id: u64,
+    _txn_id: u64,
     batch: WriteBatch,
     committed: bool,
 }
@@ -60,7 +59,7 @@ impl NestedTransaction {
             txn_id,
             batch: WriteBatch::new(),
             children: Vec::new(),
-            parent_snapshot: None,
+            _parent_snapshot: None,
             state: TransactionState::Active,
         }
     }
@@ -71,7 +70,7 @@ impl NestedTransaction {
             txn_id: self.txn_id, // inherit parent txn ID
             batch: WriteBatch::new(),
             children: Vec::new(),
-            parent_snapshot: None,
+            _parent_snapshot: None,
             state: TransactionState::Active,
         }
     }
@@ -80,7 +79,7 @@ impl NestedTransaction {
     /// The child's own writes AND its committed children's writes are merged.
     pub fn commit_child(&mut self, mut child: NestedTransaction) -> Result<()> {
         if child.state != TransactionState::Active {
-            return Err(TridentError::TransactionConflict {
+            return Err(PraxisError::TransactionConflict {
                 cf: "default".into(),
                 key: "child transaction is not active".into(),
             });
@@ -97,7 +96,7 @@ impl NestedTransaction {
         }
 
         self.children.push(NestedChild {
-            txn_id: child.txn_id,
+            _txn_id: child.txn_id,
             batch: merged_batch,
             committed: true,
         });
@@ -172,7 +171,12 @@ impl NestedTransaction {
 
     /// Get the total number of operations (this + committed children).
     pub fn total_ops(&self) -> usize {
-        let child_ops: usize = self.children.iter().filter(|c| c.committed).map(|c| c.batch.len()).sum();
+        let child_ops: usize = self
+            .children
+            .iter()
+            .filter(|c| c.committed)
+            .map(|c| c.batch.len())
+            .sum();
         self.batch.len() + child_ops
     }
 

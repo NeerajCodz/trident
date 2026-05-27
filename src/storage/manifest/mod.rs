@@ -14,8 +14,8 @@ pub type StorageManifestStore = ManifestStore;
 impl ManifestStore {
     /// Load or create with reasonable defaults (for backward compat)
     pub fn load_or_create_simple(&self) -> crate::errors::Result<Manifest> {
-        use crate::config::TridentConfig;
-        let default_config = TridentConfig::default();
+        use crate::config::PraxisConfig;
+        let default_config = PraxisConfig::default();
         self.load_or_create(&default_config)
     }
 }

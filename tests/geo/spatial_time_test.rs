@@ -1,4 +1,4 @@
-use trident::{BoundingBox, PackedRTreeIndex, RecordId, TimePartition};
+use praxis::{BoundingBox, PackedRTreeIndex, RecordId, TimePartition};
 
 #[test]
 fn spatial_index_filters_by_intersection() {

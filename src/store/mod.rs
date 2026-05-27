@@ -71,7 +71,7 @@ pub struct CanonicalStorageStats {
     pub canonical_live_bytes: u64,
 }
 
-/// The single primary data store for Trident's no-duplication storage engine.
+/// The single primary data store for praxis's no-duplication storage engine.
 ///
 /// Raw value bytes are appended to the active segment file exactly once.
 /// The returned [`RecordId`] is the canonical stable address used by all

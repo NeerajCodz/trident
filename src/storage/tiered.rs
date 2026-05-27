@@ -230,11 +230,14 @@ impl TierMigrationEngine {
 
     /// Record a heat sample for a record.
     pub fn record_access(&mut self, record_id: u64, is_write: bool) {
-        let sample = self.heat_samples.entry(record_id).or_insert(TierHeatSample {
-            reads: 0,
-            writes: 0,
-            age_seconds: 0,
-        });
+        let sample = self
+            .heat_samples
+            .entry(record_id)
+            .or_insert(TierHeatSample {
+                reads: 0,
+                writes: 0,
+                age_seconds: 0,
+            });
         if is_write {
             sample.writes += 1;
         } else {
@@ -299,7 +302,8 @@ impl TierMigrationEngine {
 
     /// Clear old heat samples.
     pub fn prune_samples(&mut self, max_age_seconds: u64) {
-        self.heat_samples.retain(|_, sample| sample.age_seconds < max_age_seconds);
+        self.heat_samples
+            .retain(|_, sample| sample.age_seconds < max_age_seconds);
     }
 }
 

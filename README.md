@@ -1,10 +1,10 @@
-# Trident
+# Praxis
 
-Trident is the standalone Rust storage engine core for Poiesis. It is not a wrapper over an existing database and it does not carry Poiesis entity semantics inside the core. Trident owns durable value IO, RAM-resident value IO, WAL recovery, immutable segments, cache behavior, snapshots, compaction hooks, and acceleration boundaries.
+Praxis is the standalone Rust storage engine core for Poiesis. It is not a wrapper over an existing database and it does not carry Poiesis entity semantics inside the core. Praxis owns durable value IO, RAM-resident value IO, WAL recovery, immutable segments, cache behavior, snapshots, compaction hooks, and acceleration boundaries.
 
 ## Storage-Layer Contract: No Duplicate Value Bytes
 
-Trident now exposes a storage-only orchestration API (`store::StorageEngine`) built around a single primary `RecordStore`. Raw bytes are written once, assigned a stable logical `RecordId`, and every index overlay stores only `key -> RecordId` pointers.
+Praxis now exposes a storage-only orchestration API (`store::StorageEngine`) built around a single primary `RecordStore`. Raw bytes are written once, assigned a stable logical `RecordId`, and every index overlay stores only `key -> RecordId` pointers.
 
 - **Primary store**: append-only record segments with logical RID indirection (`RecordId -> physical location`) for compaction-safe address stability.
 - **Segmented storage WAL**: rotated WAL segments replay in sequence for all index updates using entries shaped as `[sequence | index_type | key | RID | operation]`.
@@ -35,6 +35,6 @@ Trident now exposes a storage-only orchestration API (`store::StorageEngine`) bu
 
 ```powershell
 cargo test
-cargo run -- put --data-dir .trident-dev hello world
-cargo run -- get --data-dir .trident-dev hello
+cargo run -- put --data-dir .praxis-dev hello world
+cargo run -- get --data-dir .praxis-dev hello
 ```

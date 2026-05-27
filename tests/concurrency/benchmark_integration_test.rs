@@ -5,16 +5,16 @@
 
 #[cfg(test)]
 mod phase3b_integration {
-    use std::sync::Arc;
-    use std::thread;
-    use tempfile::tempdir;
-    use trident::bench::{
+    use praxis::bench::{
         LatencyDistribution, LockContentionTracker, ThroughputMeter, WorkloadGenerator,
         WorkloadPattern, WriteAmplificationTracker,
     };
-    use trident::bench_advanced::{BenchmarkResult, BenchmarkSuite};
-    use trident::storage::lsm::LsmIndex;
-    use trident::store::{IndexInsert, StorageEngine};
+    use praxis::bench_advanced::{BenchmarkResult, BenchmarkSuite};
+    use praxis::storage::lsm::LsmIndex;
+    use praxis::store::{IndexInsert, StorageEngine};
+    use std::sync::Arc;
+    use std::thread;
+    use tempfile::tempdir;
 
     #[test]
     fn test_phase3b_sequential_workload() {

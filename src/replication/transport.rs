@@ -1,6 +1,8 @@
-use crate::errors::{Result, TridentError};
-use crate::replication::raft::{AppendEntriesRequest, AppendEntriesResponse, VoteRequest, VoteResponse};
+use crate::errors::{PraxisError, Result};
 use crate::replication::ReplicationRecord;
+use crate::replication::raft::{
+    AppendEntriesRequest, AppendEntriesResponse, VoteRequest, VoteResponse,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -15,11 +17,20 @@ pub enum RaftMessage {
     /// Replication record for sync
     Replicate(ReplicationRecord),
     /// Acknowledge receipt of replication record
-    ReplicateAck { sequence: u64 },
+    ReplicateAck {
+        sequence: u64,
+    },
     /// Request snapshot
-    SnapshotRequest { from_sequence: u64 },
+    SnapshotRequest {
+        from_sequence: u64,
+    },
     /// Snapshot chunk
-    SnapshotChunk { snapshot_id: u64, chunk_id: u64, data: Vec<u8>, final_chunk: bool },
+    SnapshotChunk {
+        snapshot_id: u64,
+        chunk_id: u64,
+        data: Vec<u8>,
+        final_chunk: bool,
+    },
 }
 
 /// Transport endpoint for a remote node.
@@ -114,7 +125,7 @@ impl ReplicationTransport for MemoryTransport {
         let pos = bus.iter().position(|(target, _)| target == &self.node_id);
         match pos {
             Some(idx) => Ok(bus.remove(idx)),
-            None => Err(TridentError::Replication("no messages available".into())),
+            None => Err(PraxisError::Replication("no messages available".into())),
         }
     }
 
@@ -129,7 +140,10 @@ impl ReplicationTransport for MemoryTransport {
     }
 
     fn add_peer(&self, endpoint: TransportEndpoint) -> Result<()> {
-        self.peers.lock().unwrap().insert(endpoint.node_id.clone(), endpoint);
+        self.peers
+            .lock()
+            .unwrap()
+            .insert(endpoint.node_id.clone(), endpoint);
         Ok(())
     }
 
@@ -141,15 +155,15 @@ impl ReplicationTransport for MemoryTransport {
 
 /// Replication log transport that uses the FileReplicationLog.
 pub struct LogTransport {
-    log: Arc<Mutex<crate::replication::FileReplicationLog>>,
-    peers: BTreeMap<String, TransportEndpoint>,
+    _log: Arc<Mutex<crate::replication::FileReplicationLog>>,
+    _peers: BTreeMap<String, TransportEndpoint>,
 }
 
 impl LogTransport {
     pub fn new(log: crate::replication::FileReplicationLog) -> Self {
         Self {
-            log: Arc::new(Mutex::new(log)),
-            peers: BTreeMap::new(),
+            _log: Arc::new(Mutex::new(log)),
+            _peers: BTreeMap::new(),
         }
     }
 }
@@ -196,7 +210,7 @@ impl ReplicationManager {
             }
             crate::replication::ReplicationMode::Quorum => {
                 // Wait for majority
-                let quorum = (peers.len() + 1) / 2;
+                let quorum = peers.len().div_ceil(2);
                 let mut acks = 0;
                 for peer in &peers {
                     if self.transport.send(peer, message.clone()).is_ok() {
@@ -209,7 +223,7 @@ impl ReplicationManager {
                 if acks >= quorum {
                     Ok(())
                 } else {
-                    Err(TridentError::Replication("quorum not reached".into()))
+                    Err(PraxisError::Replication("quorum not reached".into()))
                 }
             }
         }

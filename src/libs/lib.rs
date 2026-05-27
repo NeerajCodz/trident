@@ -26,10 +26,10 @@ pub mod wal;
 
 pub use config::{
     AcceleratorBackend, ChecksumMode, CompactionStrategy, Compression, LoggingOptions,
-    MemTableKind, PersistedEngineConfig, TridentConfig, WalSyncPolicy,
+    MemTableKind, PersistedEngineConfig, PraxisConfig, WalSyncPolicy,
 };
-pub use engine::{AsyncTridentEngine, TridentEngine};
-pub use errors::{Result, TridentError};
+pub use engine::{AsyncPraxisEngine, PraxisEngine};
+pub use errors::{Result, PraxisError};
 pub use maintenance::{
     FailedJobRecord, JobPriority, MaintenanceRuntimeConfig, MaintenanceStatusSnapshot,
     RunningJobRecord, RuntimeLaneConfig, RuntimeStatusSnapshot,

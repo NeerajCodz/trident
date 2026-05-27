@@ -1,6 +1,6 @@
 # Observability
 
-Trident logs JSON wide events through `slog`. Production paths should emit one completion event per request, service hop, maintenance job, or benchmark run.
+Praxis logs JSON wide events through `slog`. Production paths should emit one completion event per request, service hop, maintenance job, or benchmark run.
 
 ## API
 

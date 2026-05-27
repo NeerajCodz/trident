@@ -27,15 +27,15 @@ pub struct RemoteStorageRequest {
     pub body: Vec<u8>,
 }
 
-pub struct LocalTridentClient {
+pub struct LocalpraxisClient {
     service: PrimitiveStorageService,
 }
 
-pub struct LocalPageTridentClient {
+pub struct LocalPagepraxisClient {
     service: PagePrimitiveStorageService,
 }
 
-impl LocalTridentClient {
+impl LocalpraxisClient {
     pub fn new(engine: StorageEngine) -> Self {
         Self {
             service: PrimitiveStorageService::new(engine),
@@ -87,7 +87,7 @@ impl LocalTridentClient {
     }
 }
 
-impl LocalPageTridentClient {
+impl LocalPagepraxisClient {
     pub fn open(root: impl Into<PathBuf>) -> Self {
         Self {
             service: PagePrimitiveStorageService::open(root),
@@ -144,21 +144,21 @@ impl LocalPageTridentClient {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RestTridentClient {
+pub struct RestpraxisClient {
     endpoint: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct GrpcTridentClient {
+pub struct GrpcpraxisClient {
     endpoint: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct GraphQlTridentClient {
+pub struct GraphQlpraxisClient {
     endpoint: String,
 }
 
-impl RestTridentClient {
+impl RestpraxisClient {
     pub fn new(endpoint: impl Into<String>) -> Self {
         Self {
             endpoint: endpoint.into(),
@@ -194,7 +194,7 @@ impl RestTridentClient {
     }
 }
 
-impl GrpcTridentClient {
+impl GrpcpraxisClient {
     pub fn new(endpoint: impl Into<String>) -> Self {
         Self {
             endpoint: endpoint.into(),
@@ -209,7 +209,7 @@ impl GrpcTridentClient {
         remote_request(
             SdkTransport::Grpc,
             context,
-            "trident.storage.v1.RecordService/PutRecord",
+            "praxis.storage.v1.RecordService/PutRecord",
             self.endpoint.clone(),
             body,
         )
@@ -223,14 +223,14 @@ impl GrpcTridentClient {
         remote_request(
             SdkTransport::Grpc,
             context,
-            "trident.storage.v1.RecordService/PutRecordBatch",
+            "praxis.storage.v1.RecordService/PutRecordBatch",
             self.endpoint.clone(),
             body,
         )
     }
 }
 
-impl GraphQlTridentClient {
+impl GraphQlpraxisClient {
     pub fn new(endpoint: impl Into<String>) -> Self {
         Self {
             endpoint: endpoint.into(),
@@ -299,11 +299,11 @@ pub trait RemoteTransport: Send + Sync {
 }
 
 /// A client that can execute remote storage operations.
-pub struct RemoteTridentClient {
+pub struct RemotepraxisClient {
     transport: Box<dyn RemoteTransport>,
 }
 
-impl RemoteTridentClient {
+impl RemotepraxisClient {
     pub fn new(transport: impl RemoteTransport + 'static) -> Self {
         Self {
             transport: Box::new(transport),
@@ -316,13 +316,21 @@ impl RemoteTridentClient {
     }
 
     /// Put a record via REST.
-    pub fn put_record(&self, endpoint: &str, key: &str, value: Vec<u8>) -> Result<RemoteStorageResponse> {
+    pub fn put_record(
+        &self,
+        endpoint: &str,
+        key: &str,
+        value: Vec<u8>,
+    ) -> Result<RemoteStorageResponse> {
         let request = RemoteStorageRequest {
             transport: SdkTransport::Rest,
-            request_id: format!("{:016x}", std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos()),
+            request_id: format!(
+                "{:016x}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos()
+            ),
             operation: "put_record".to_string(),
             path: format!("{}/v1/kv/{}", endpoint, key),
             body: value,
@@ -334,10 +342,13 @@ impl RemoteTridentClient {
     pub fn get_record(&self, endpoint: &str, key: &str) -> Result<RemoteStorageResponse> {
         let request = RemoteStorageRequest {
             transport: SdkTransport::Rest,
-            request_id: format!("{:016x}", std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos()),
+            request_id: format!(
+                "{:016x}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos()
+            ),
             operation: "get_record".to_string(),
             path: format!("{}/v1/kv/{}", endpoint, key),
             body: Vec::new(),
@@ -349,10 +360,13 @@ impl RemoteTridentClient {
     pub fn delete_record(&self, endpoint: &str, key: &str) -> Result<RemoteStorageResponse> {
         let request = RemoteStorageRequest {
             transport: SdkTransport::Rest,
-            request_id: format!("{:016x}", std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos()),
+            request_id: format!(
+                "{:016x}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos()
+            ),
             operation: "delete_record".to_string(),
             path: format!("{}/v1/kv/{}", endpoint, key),
             body: Vec::new(),
@@ -364,10 +378,13 @@ impl RemoteTridentClient {
     pub fn execute_query(&self, endpoint: &str, query: &str) -> Result<RemoteStorageResponse> {
         let request = RemoteStorageRequest {
             transport: SdkTransport::Rest,
-            request_id: format!("{:016x}", std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos()),
+            request_id: format!(
+                "{:016x}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos()
+            ),
             operation: "execute_query".to_string(),
             path: format!("{}/v1/query", endpoint),
             body: serde_json::to_vec(&serde_json::json!({ "query": query })).unwrap_or_default(),

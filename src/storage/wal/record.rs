@@ -1,4 +1,4 @@
-use crate::errors::{Result, TridentError};
+use crate::errors::{Result, PraxisError};
 use crate::io::{BinaryReader, BinaryWriter, crc32c};
 use crate::transactions::{BatchOp, WriteBatch};
 use crate::types::ColumnFamily;
@@ -69,7 +69,7 @@ impl WalRecord {
         let mut reader = BinaryReader::new(bytes, source.clone());
         let magic = reader.read_u32()?;
         if magic != WAL_MAGIC {
-            return Err(TridentError::Corrupt {
+            return Err(PraxisError::Corrupt {
                 path: source,
                 reason: "bad WAL magic".to_string(),
             });
@@ -77,14 +77,14 @@ impl WalRecord {
         let len = reader.read_u32()? as usize;
         let expected = reader.read_u32()?;
         if bytes.len() < WAL_RECORD_HEADER_LEN + len {
-            return Err(TridentError::Corrupt {
+            return Err(PraxisError::Corrupt {
                 path: source,
                 reason: "torn WAL record".to_string(),
             });
         }
         let payload = &bytes[WAL_RECORD_HEADER_LEN..WAL_RECORD_HEADER_LEN + len];
         if crc32c(payload) != expected {
-            return Err(TridentError::Corrupt {
+            return Err(PraxisError::Corrupt {
                 path: source,
                 reason: "WAL checksum mismatch".to_string(),
             });
@@ -122,7 +122,7 @@ impl WalRecord {
                     batch.merge(cf, bytes::Bytes::from(key), bytes::Bytes::from(value));
                 }
                 _ => {
-                    return Err(TridentError::Corrupt {
+                    return Err(PraxisError::Corrupt {
                         path: PathBuf::from("wal-payload"),
                         reason: format!("unknown WAL op tag {tag}"),
                     });

@@ -1,11 +1,11 @@
-use trident::formats::codecs::FormatCodec;
-use trident::formats::codecs::bitmap::{BitmapBlock, BitmapCodec};
-use trident::formats::codecs::checkpoint::{CheckpointBlock, CheckpointCodec};
-use trident::formats::codecs::columnar::{ColumnarBlock, ColumnarBlockCodec};
-use trident::formats::codecs::filter::{FilterBlock, FilterCodec};
-use trident::formats::codecs::postings::{PostingsCodec, PostingsList};
-use trident::formats::codecs::row::{RowRecord, RowRecordCodec};
-use trident::formats::codecs::vector_graph::{VectorGraphCodec, VectorGraphNode};
+use praxis::formats::codecs::FormatCodec;
+use praxis::formats::codecs::bitmap::{BitmapBlock, BitmapCodec};
+use praxis::formats::codecs::checkpoint::{CheckpointBlock, CheckpointCodec};
+use praxis::formats::codecs::columnar::{ColumnarBlock, ColumnarBlockCodec};
+use praxis::formats::codecs::filter::{FilterBlock, FilterCodec};
+use praxis::formats::codecs::postings::{PostingsCodec, PostingsList};
+use praxis::formats::codecs::row::{RowRecord, RowRecordCodec};
+use praxis::formats::codecs::vector_graph::{VectorGraphCodec, VectorGraphNode};
 
 #[test]
 fn versioned_format_codecs_roundtrip() {
@@ -28,7 +28,7 @@ fn versioned_format_codecs_roundtrip() {
     );
 
     let postings = PostingsList {
-        term: b"trident".to_vec(),
+        term: b"praxis".to_vec(),
         record_ids: vec![1, 2, 3],
     };
     assert_eq!(

@@ -1,6 +1,6 @@
+use praxis::datatype::SegmentFamily;
+use praxis::segments::BlobStore;
 use tempfile::tempdir;
-use trident::datatype::SegmentFamily;
-use trident::segments::BlobStore;
 
 #[test]
 fn overflow_blob_store_appends_and_reads_bytes() {

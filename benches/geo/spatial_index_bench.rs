@@ -1,5 +1,5 @@
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
-use trident::{BoundingBox, PackedRTreeIndex, RecordId};
+use praxis::{BoundingBox, PackedRTreeIndex, RecordId};
 
 fn bench_spatial_intersection(c: &mut Criterion) {
     let mut index = PackedRTreeIndex::default();

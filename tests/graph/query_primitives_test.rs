@@ -1,8 +1,8 @@
-use trident::RecordId;
-use trident::index::adjacency::AdjacencyIndex;
-use trident::kernel::ExecutionMode;
-use trident::query::graph::{GraphTraversal, traverse};
-use trident::query::{QueryModel, plan};
+use praxis::RecordId;
+use praxis::index::adjacency::AdjacencyIndex;
+use praxis::kernel::ExecutionMode;
+use praxis::query::graph::{GraphTraversal, traverse};
+use praxis::query::{QueryModel, plan};
 
 #[test]
 fn graph_plans_to_adjacency_path() {
@@ -26,10 +26,38 @@ fn graph_traversal_request_is_stable() {
 fn graph_traversal_cursor_walks_breadth_first_with_label_filter() {
     let dir = tempfile::tempdir().unwrap();
     let mut index = AdjacencyIndex::open("graph", dir.path()).unwrap();
-    index.add_edge(RecordId(1), b"knows", RecordId(2), std::collections::BTreeMap::new()).unwrap();
-    index.add_edge(RecordId(1), b"likes", RecordId(9), std::collections::BTreeMap::new()).unwrap();
-    index.add_edge(RecordId(2), b"knows", RecordId(3), std::collections::BTreeMap::new()).unwrap();
-    index.add_edge(RecordId(3), b"knows", RecordId(1), std::collections::BTreeMap::new()).unwrap();
+    index
+        .add_edge(
+            RecordId(1),
+            b"knows",
+            RecordId(2),
+            std::collections::BTreeMap::new(),
+        )
+        .unwrap();
+    index
+        .add_edge(
+            RecordId(1),
+            b"likes",
+            RecordId(9),
+            std::collections::BTreeMap::new(),
+        )
+        .unwrap();
+    index
+        .add_edge(
+            RecordId(2),
+            b"knows",
+            RecordId(3),
+            std::collections::BTreeMap::new(),
+        )
+        .unwrap();
+    index
+        .add_edge(
+            RecordId(3),
+            b"knows",
+            RecordId(1),
+            std::collections::BTreeMap::new(),
+        )
+        .unwrap();
 
     let hits = traverse(
         &index,
@@ -43,15 +71,15 @@ fn graph_traversal_cursor_walks_breadth_first_with_label_filter() {
     assert_eq!(
         hits,
         vec![
-            trident::query::graph::GraphTraversalHit {
+            praxis::query::graph::GraphTraversalHit {
                 record_id: RecordId(1),
                 depth: 0
             },
-            trident::query::graph::GraphTraversalHit {
+            praxis::query::graph::GraphTraversalHit {
                 record_id: RecordId(2),
                 depth: 1
             },
-            trident::query::graph::GraphTraversalHit {
+            praxis::query::graph::GraphTraversalHit {
                 record_id: RecordId(3),
                 depth: 2
             }
@@ -63,7 +91,14 @@ fn graph_traversal_cursor_walks_breadth_first_with_label_filter() {
 fn graph_traversal_reflects_deleted_edges() {
     let dir = tempfile::tempdir().unwrap();
     let mut index = AdjacencyIndex::open("graph", dir.path()).unwrap();
-    index.add_edge(RecordId(1), b"knows", RecordId(2), std::collections::BTreeMap::new()).unwrap();
+    index
+        .add_edge(
+            RecordId(1),
+            b"knows",
+            RecordId(2),
+            std::collections::BTreeMap::new(),
+        )
+        .unwrap();
     index.remove_edges(RecordId(1), RecordId(2));
 
     let hits = traverse(

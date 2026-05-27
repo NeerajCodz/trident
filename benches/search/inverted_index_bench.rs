@@ -1,5 +1,5 @@
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
-use trident::{InvertedIndex, RecordId};
+use praxis::{InvertedIndex, RecordId};
 
 fn bench_inverted_search(c: &mut Criterion) {
     let mut index = InvertedIndex::new("search");

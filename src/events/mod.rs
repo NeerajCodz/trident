@@ -65,10 +65,19 @@ impl EventLog {
     }
 
     /// Append an event to the log. Returns the event with its computed hash.
-    pub fn append(&self, kind: EventKind, collection: &str, record_id: Option<PhysicalRecordId>, payload: Vec<u8>) -> Event {
+    pub fn append(
+        &self,
+        kind: EventKind,
+        collection: &str,
+        record_id: Option<PhysicalRecordId>,
+        payload: Vec<u8>,
+    ) -> Event {
         let mut events = self.events.lock().unwrap();
         let sequence = events.len() as u64 + 1;
-        let previous_hash = events.last().map(|e| e.hash.clone()).unwrap_or_else(|| "0".repeat(64));
+        let previous_hash = events
+            .last()
+            .map(|e| e.hash.clone())
+            .unwrap_or_else(|| "0".repeat(64));
 
         let timestamp_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -78,7 +87,12 @@ impl EventLog {
         // Compute hash: SHA-256(sequence + previous_hash + timestamp + kind + collection + payload)
         let hash_input = format!(
             "{}:{}:{}:{:?}:{}:{:?}",
-            sequence, previous_hash, timestamp_ms, kind, collection, &payload[..payload.len().min(32)]
+            sequence,
+            previous_hash,
+            timestamp_ms,
+            kind,
+            collection,
+            &payload[..payload.len().min(32)]
         );
         let hash = sha256_hex(hash_input.as_bytes());
 
@@ -111,7 +125,9 @@ impl EventLog {
 
     /// Get events since a sequence number.
     pub fn events_since(&self, sequence: u64) -> Vec<Event> {
-        self.events.lock().unwrap()
+        self.events
+            .lock()
+            .unwrap()
             .iter()
             .filter(|e| e.sequence >= sequence)
             .cloned()
@@ -120,7 +136,9 @@ impl EventLog {
 
     /// Get events for a specific collection.
     pub fn events_for_collection(&self, collection: &str) -> Vec<Event> {
-        self.events.lock().unwrap()
+        self.events
+            .lock()
+            .unwrap()
             .iter()
             .filter(|e| e.collection == collection)
             .cloned()
@@ -145,8 +163,12 @@ impl EventLog {
             // Verify hash
             let hash_input = format!(
                 "{}:{}:{}:{:?}:{}:{:?}",
-                event.sequence, event.previous_hash, event.timestamp_ms,
-                event.kind, event.collection, &event.payload[..event.payload.len().min(32)]
+                event.sequence,
+                event.previous_hash,
+                event.timestamp_ms,
+                event.kind,
+                event.collection,
+                &event.payload[..event.payload.len().min(32)]
             );
             let expected_hash = sha256_hex(hash_input.as_bytes());
             if event.hash != expected_hash {
@@ -202,7 +224,11 @@ fn sha256_hex(data: &[u8]) -> String {
     let mut hasher = DefaultHasher::new();
     data.hash(&mut hasher);
     let hash = hasher.finish();
-    format!("{:016x}{:016x}", hash, hash.wrapping_mul(0x9e3779b97f4a7c15))
+    format!(
+        "{:016x}{:016x}",
+        hash,
+        hash.wrapping_mul(0x9e3779b97f4a7c15)
+    )
 }
 
 #[cfg(test)]
@@ -212,8 +238,18 @@ mod tests {
     #[test]
     fn test_event_log_append() {
         let log = EventLog::new(100);
-        let e1 = log.append(EventKind::Insert, "users", Some(PhysicalRecordId(1)), b"test".to_vec());
-        let e2 = log.append(EventKind::Update, "users", Some(PhysicalRecordId(1)), b"test2".to_vec());
+        let e1 = log.append(
+            EventKind::Insert,
+            "users",
+            Some(PhysicalRecordId(1)),
+            b"test".to_vec(),
+        );
+        let e2 = log.append(
+            EventKind::Update,
+            "users",
+            Some(PhysicalRecordId(1)),
+            b"test2".to_vec(),
+        );
 
         assert_eq!(e1.sequence, 1);
         assert_eq!(e2.sequence, 2);
@@ -224,9 +260,24 @@ mod tests {
     #[test]
     fn test_event_log_chain_integrity() {
         let log = EventLog::new(100);
-        log.append(EventKind::Insert, "users", Some(PhysicalRecordId(1)), b"a".to_vec());
-        log.append(EventKind::Update, "users", Some(PhysicalRecordId(1)), b"b".to_vec());
-        log.append(EventKind::Delete, "users", Some(PhysicalRecordId(1)), vec![]);
+        log.append(
+            EventKind::Insert,
+            "users",
+            Some(PhysicalRecordId(1)),
+            b"a".to_vec(),
+        );
+        log.append(
+            EventKind::Update,
+            "users",
+            Some(PhysicalRecordId(1)),
+            b"b".to_vec(),
+        );
+        log.append(
+            EventKind::Delete,
+            "users",
+            Some(PhysicalRecordId(1)),
+            vec![],
+        );
 
         assert!(log.verify());
     }
@@ -234,9 +285,24 @@ mod tests {
     #[test]
     fn test_event_log_filter_by_collection() {
         let log = EventLog::new(100);
-        log.append(EventKind::Insert, "users", Some(PhysicalRecordId(1)), vec![]);
-        log.append(EventKind::Insert, "orders", Some(PhysicalRecordId(2)), vec![]);
-        log.append(EventKind::Update, "users", Some(PhysicalRecordId(1)), vec![]);
+        log.append(
+            EventKind::Insert,
+            "users",
+            Some(PhysicalRecordId(1)),
+            vec![],
+        );
+        log.append(
+            EventKind::Insert,
+            "orders",
+            Some(PhysicalRecordId(2)),
+            vec![],
+        );
+        log.append(
+            EventKind::Update,
+            "users",
+            Some(PhysicalRecordId(1)),
+            vec![],
+        );
 
         let user_events = log.events_for_collection("users");
         assert_eq!(user_events.len(), 2);
@@ -245,9 +311,24 @@ mod tests {
     #[test]
     fn test_event_log_projection() {
         let log = EventLog::new(100);
-        log.append(EventKind::Insert, "users", Some(PhysicalRecordId(1)), serde_json::to_vec(&serde_json::json!({"name": "Alice"})).unwrap());
-        log.append(EventKind::Update, "users", Some(PhysicalRecordId(1)), serde_json::to_vec(&serde_json::json!({"name": "Bob"})).unwrap());
-        log.append(EventKind::Insert, "users", Some(PhysicalRecordId(2)), serde_json::to_vec(&serde_json::json!({"name": "Charlie"})).unwrap());
+        log.append(
+            EventKind::Insert,
+            "users",
+            Some(PhysicalRecordId(1)),
+            serde_json::to_vec(&serde_json::json!({"name": "Alice"})).unwrap(),
+        );
+        log.append(
+            EventKind::Update,
+            "users",
+            Some(PhysicalRecordId(1)),
+            serde_json::to_vec(&serde_json::json!({"name": "Bob"})).unwrap(),
+        );
+        log.append(
+            EventKind::Insert,
+            "users",
+            Some(PhysicalRecordId(2)),
+            serde_json::to_vec(&serde_json::json!({"name": "Charlie"})).unwrap(),
+        );
 
         let projection = log.build_projection();
         assert_eq!(projection.len(), 2);
@@ -257,7 +338,12 @@ mod tests {
     fn test_event_log_max_size() {
         let log = EventLog::new(3);
         for i in 0..5 {
-            log.append(EventKind::Insert, "users", Some(PhysicalRecordId(i)), vec![]);
+            log.append(
+                EventKind::Insert,
+                "users",
+                Some(PhysicalRecordId(i)),
+                vec![],
+            );
         }
         assert_eq!(log.count(), 3);
     }

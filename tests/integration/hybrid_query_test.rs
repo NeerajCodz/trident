@@ -1,6 +1,6 @@
-use trident::kernel::ExecutionMode;
-use trident::query::QueryModel;
-use trident::query::hybrid::{HybridPlan, HybridQuery};
+use praxis::kernel::ExecutionMode;
+use praxis::query::QueryModel;
+use praxis::query::hybrid::{HybridPlan, HybridQuery};
 
 #[test]
 fn hybrid_plan_orders_specialized_steps_by_cost() {

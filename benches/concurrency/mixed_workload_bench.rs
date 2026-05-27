@@ -1,13 +1,13 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use parking_lot::Mutex;
+use praxis::bench::{LatencyDistribution, WorkloadGenerator, WorkloadPattern};
+use praxis::storage::lsm::LsmIndex;
+use praxis::store::{IndexInsert, StorageEngine};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Instant;
 use tempfile::tempdir;
-use trident::bench::{LatencyDistribution, WorkloadGenerator, WorkloadPattern};
-use trident::storage::lsm::LsmIndex;
-use trident::store::{IndexInsert, StorageEngine};
 
 // ──────────────────────────────────────────────
 // Phase 3B: Workload Patterns & Value Scaling

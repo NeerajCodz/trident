@@ -1,11 +1,11 @@
-use trident::errors::Result;
-use trident::index::{IndexPlugin, IndexStats, IndexStorageLayout};
-use trident::kernel::{
+use praxis::errors::Result;
+use praxis::index::{IndexPlugin, IndexStats, IndexStorageLayout};
+use praxis::kernel::{
     CanonicalValuePolicy, DurableArtifactDescriptor, DurableArtifactKind, DurableArtifactState,
     DurableFormatDescriptor, EngineCapability, KernelInvariant, KernelInvariantValidator,
     PhysicalEngine, PhysicalEngineKind, StorageOperationMetrics,
 };
-use trident::store::{RecordId, StorageEngine};
+use praxis::store::{RecordId, StorageEngine};
 
 struct FullValueIndex;
 

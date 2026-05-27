@@ -1,4 +1,4 @@
-//! Standardized binary format utilities for Trident storage engine.
+//! Standardized binary format utilities for praxis storage engine.
 //!
 //! This module provides:
 //! - Unified magic number and version scheme
@@ -12,7 +12,7 @@ pub mod codecs;
 use crc32fast::Hasher as Crc32Hasher;
 use std::io::{self, Read, Write};
 
-/// Magic number identifying Trident index files: "TRID" (0x54524944)
+/// Magic number identifying praxis index files: "TRID" (0x54524944)
 pub const TRIDENT_MAGIC: u32 = 0x54524944;
 
 /// Current binary format version

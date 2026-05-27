@@ -1,4 +1,4 @@
-use crate::config::TridentConfig;
+use crate::config::PraxisConfig;
 use crate::errors::Result;
 use crate::io::{read_file_with_policy, write_file_with_policy};
 use crate::storage::manifest::model::Manifest;
@@ -18,7 +18,7 @@ impl ManifestStore {
         Self { path: path.into() }
     }
 
-    pub fn load_or_create(&self, config: &TridentConfig) -> Result<Manifest> {
+    pub fn load_or_create(&self, config: &PraxisConfig) -> Result<Manifest> {
         if self.path.exists() {
             let (bytes, _) = read_file_with_policy(&self.path, config.direct_io)?;
             Ok(toml::from_str(&String::from_utf8_lossy(&bytes))?)

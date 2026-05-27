@@ -249,7 +249,7 @@ impl PrimitiveStorageService {
             .map(|value| GetRecordResponse { value: Some(value) });
         let response = match result {
             Ok(response) => Ok(response),
-            Err(crate::errors::TridentError::KeyNotFound) => Ok(GetRecordResponse { value: None }),
+            Err(crate::errors::PraxisError::KeyNotFound) => Ok(GetRecordResponse { value: None }),
             Err(error) => Err(error),
         };
         emit_service_event(
@@ -376,7 +376,7 @@ impl PagePrimitiveStorageService {
         });
         let response = match result {
             Ok(response) => Ok(response),
-            Err(crate::errors::TridentError::KeyNotFound) => {
+            Err(crate::errors::PraxisError::KeyNotFound) => {
                 Ok(GetPageRecordResponse { body: None })
             }
             Err(error) => Err(error),

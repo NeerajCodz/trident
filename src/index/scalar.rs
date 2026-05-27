@@ -29,7 +29,13 @@ impl ScalarIndex {
     }
 
     /// Range query: returns all record IDs where the indexed value is in [low, high].
-    pub fn range(&self, low: &str, high: &str, low_inclusive: bool, high_inclusive: bool) -> Vec<RecordId> {
+    pub fn range(
+        &self,
+        low: &str,
+        high: &str,
+        low_inclusive: bool,
+        high_inclusive: bool,
+    ) -> Vec<RecordId> {
         let low_bound = if low_inclusive {
             Bound::Included(low.to_string())
         } else {

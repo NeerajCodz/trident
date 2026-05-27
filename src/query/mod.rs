@@ -1,4 +1,4 @@
-//! Query layer for Trident: SQL/PQL parser, logical plans, and query model definitions.
+//! Query layer for praxis: SQL/PQL parser, logical plans, and query model definitions.
 //!
 //! The parser supports:
 //! - SQL: SELECT, INSERT, UPDATE, DELETE, CREATE/ALTER/DROP COLLECTION, EXPLAIN
@@ -22,7 +22,7 @@ pub use parser::{
 };
 pub use tokenizer::{Token, tokenize};
 
-// Legacy query model types (used by other Trident modules)
+// Legacy query model types (used by other praxis modules)
 use crate::kernel::ExecutionMode;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

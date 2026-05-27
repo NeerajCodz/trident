@@ -1,16 +1,16 @@
 use crate::api::server::{RestServerConfig, serve_rest};
 use crate::manifest::ColumnFamilyDescriptor;
-use crate::{ColumnFamily, Result, TridentConfig, TridentEngine};
+use crate::{ColumnFamily, PraxisConfig, PraxisEngine, Result};
 use bytes::Bytes;
 use clap::{Parser, Subcommand};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "trident")]
-#[command(about = "Trident storage engine CLI")]
+#[command(name = "praxis")]
+#[command(about = "praxis storage engine CLI")]
 pub struct Cli {
-    #[arg(long, global = true, default_value = ".trident")]
+    #[arg(long, global = true, default_value = ".praxis")]
     data_dir: PathBuf,
     #[command(subcommand)]
     command: Command,
@@ -78,7 +78,7 @@ enum Command {
 pub fn run() -> Result<()> {
     let cli = Cli::parse();
     let data_dir = cli.data_dir.clone();
-    let engine = TridentEngine::open(TridentConfig::new(&data_dir))?;
+    let engine = PraxisEngine::open(PraxisConfig::new(&data_dir))?;
     match cli.command {
         Command::Put { cf, key, value } => {
             let mut batch = crate::WriteBatch::new();
@@ -160,10 +160,10 @@ pub fn run() -> Result<()> {
             backup_path,
             target_path,
         } => {
-            TridentEngine::restore_from_backup(backup_path, target_path)?;
+            PraxisEngine::restore_from_backup(backup_path, target_path)?;
         }
         Command::Serve { bind } => {
-            let config = TridentConfig::new(data_dir);
+            let config = PraxisConfig::new(data_dir);
             let runtime = tokio::runtime::Runtime::new()?;
             runtime.block_on(serve_rest(RestServerConfig {
                 engine: config,

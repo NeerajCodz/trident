@@ -1,5 +1,5 @@
-use trident::index::btree::manager::BTreePageManager;
-use trident::store::RecordId;
+use praxis::index::btree::manager::BTreePageManager;
+use praxis::store::RecordId;
 
 #[test]
 fn btree_page_manager_allocates_inserts_and_splits_leaf_pages() {

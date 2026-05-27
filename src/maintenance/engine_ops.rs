@@ -1,13 +1,13 @@
 use crate::config::CompactionStrategy;
-use crate::engine::core::engine::TridentEngine;
-use crate::errors::{Result, TridentError};
+use crate::engine::core::engine::PraxisEngine;
+use crate::errors::{PraxisError, Result};
 use crate::maintenance::{
     JobFailureDisposition, JobPriority, MaintenanceJob, MaintenanceLane, MaintenanceRuntimeConfig,
     MaintenanceStatusSnapshot, QueuedJob,
 };
 use crate::slog;
 
-impl TridentEngine {
+impl PraxisEngine {
     pub fn enqueue_flush_job(
         &self,
         reason: impl Into<String>,
@@ -107,7 +107,7 @@ impl TridentEngine {
         for handle in handles {
             let completed = handle
                 .join()
-                .map_err(|_| TridentError::TaskJoin("maintenance worker panicked".to_string()))??;
+                .map_err(|_| PraxisError::TaskJoin("maintenance worker panicked".to_string()))??;
             total += completed;
         }
         Ok(total)
@@ -134,11 +134,11 @@ impl TridentEngine {
         let mut scheduler = self.inner.scheduler.lock();
         let retried = scheduler.retry_failed(job_id).ok_or_else(|| {
             if scheduler.has_failed_job(job_id) {
-                TridentError::WriteStalled {
+                PraxisError::WriteStalled {
                     reason: "maintenance queue capacity reached".to_string(),
                 }
             } else {
-                TridentError::MaintenanceJobNotFound(job_id)
+                PraxisError::MaintenanceJobNotFound(job_id)
             }
         })?;
         slog::info(
@@ -169,7 +169,7 @@ impl TridentEngine {
                 source_failed_job_id: None,
                 job,
             })
-            .ok_or_else(|| TridentError::WriteStalled {
+            .ok_or_else(|| PraxisError::WriteStalled {
                 reason: "maintenance queue capacity reached".to_string(),
             })?;
         slog::info(

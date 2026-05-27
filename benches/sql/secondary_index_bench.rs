@@ -1,7 +1,7 @@
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use praxis::index::IndexPlugin;
+use praxis::{BTreeIndex, RecordId};
 use tempfile::tempdir;
-use trident::index::IndexPlugin;
-use trident::{BTreeIndex, RecordId};
 
 fn bench_btree_secondary_index(c: &mut Criterion) {
     let dir = tempdir().unwrap();

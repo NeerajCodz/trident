@@ -1,7 +1,7 @@
-use crate::store::RecordId;
-use crate::errors::{Result, TridentError};
+use crate::errors::{PraxisError, Result};
 use crate::index::{IndexPlugin, IndexStats};
 use crate::io::{BinaryReader, BinaryWriter, crc32c};
+use crate::store::RecordId;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -168,8 +168,7 @@ impl InvertedIndex {
                 continue;
             };
             let docs_with_term = posting.len() as f32;
-            let idf =
-                ((doc_count - docs_with_term + 0.5) / (docs_with_term + 0.5) + 1.0).ln();
+            let idf = ((doc_count - docs_with_term + 0.5) / (docs_with_term + 0.5) + 1.0).ln();
 
             for rid in posting {
                 let frequency = self
@@ -210,8 +209,7 @@ impl InvertedIndex {
                 continue;
             };
             let docs_with_term = posting.len() as f32;
-            let idf =
-                ((doc_count - docs_with_term + 0.5) / (docs_with_term + 0.5) + 1.0).ln();
+            let idf = ((doc_count - docs_with_term + 0.5) / (docs_with_term + 0.5) + 1.0).ln();
 
             for rid in posting {
                 let frequency = self
@@ -420,31 +418,28 @@ fn encode_binary_snapshot(on_disk: &OnDisk) -> Vec<u8> {
 
 fn decode_binary_snapshot(bytes: &[u8], source: &Path) -> Result<OnDisk> {
     if bytes.len() < 13 {
-        return Err(TridentError::Corrupt {
+        return Err(PraxisError::Corrupt {
             path: source.to_path_buf(),
             reason: "truncated inverted index snapshot header".to_string(),
         });
     }
     let magic = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
     if magic != INVERTED_SNAPSHOT_MAGIC {
-        return Err(TridentError::Corrupt {
+        return Err(PraxisError::Corrupt {
             path: source.to_path_buf(),
             reason: "bad inverted index snapshot magic".to_string(),
         });
     }
     if bytes[4] != INVERTED_SNAPSHOT_VERSION {
-        return Err(TridentError::Corrupt {
+        return Err(PraxisError::Corrupt {
             path: source.to_path_buf(),
-            reason: format!(
-                "unsupported inverted index snapshot version {}",
-                bytes[4]
-            ),
+            reason: format!("unsupported inverted index snapshot version {}", bytes[4]),
         });
     }
     let payload_len = u32::from_le_bytes([bytes[5], bytes[6], bytes[7], bytes[8]]) as usize;
     let expected_crc = u32::from_le_bytes([bytes[9], bytes[10], bytes[11], bytes[12]]);
     if bytes.len() < 13 + payload_len {
-        return Err(TridentError::Corrupt {
+        return Err(PraxisError::Corrupt {
             path: source.to_path_buf(),
             reason: "truncated inverted index snapshot payload".to_string(),
         });
@@ -452,7 +447,7 @@ fn decode_binary_snapshot(bytes: &[u8], source: &Path) -> Result<OnDisk> {
     let payload = &bytes[13..13 + payload_len];
     let actual_crc = crc32c(payload);
     if actual_crc != expected_crc {
-        return Err(TridentError::Corrupt {
+        return Err(PraxisError::Corrupt {
             path: source.to_path_buf(),
             reason: format!(
                 "inverted index snapshot checksum mismatch: expected {expected_crc:#010x}, got {actual_crc:#010x}"

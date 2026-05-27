@@ -1,4 +1,4 @@
-use crate::errors::{Result, TridentError};
+use crate::errors::{PraxisError, Result};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Token {
@@ -48,7 +48,7 @@ pub fn tokenize(input: &str) -> Result<Vec<Token>> {
                 tokens.push(Token::Word(read_while(&mut chars, is_identifier_continue)));
             }
             _ => {
-                return Err(TridentError::Query(format!(
+                return Err(PraxisError::Query(format!(
                     "unsupported query character '{character}'"
                 )));
             }
@@ -59,7 +59,7 @@ pub fn tokenize(input: &str) -> Result<Vec<Token>> {
 
 fn read_quoted(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> Result<String> {
     let Some(quote) = chars.next() else {
-        return Err(TridentError::Query("expected quote".into()));
+        return Err(PraxisError::Query("expected quote".into()));
     };
     let mut output = String::new();
     while let Some(character) = chars.next() {
@@ -74,7 +74,7 @@ fn read_quoted(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> Result<S
             output.push(character);
         }
     }
-    Err(TridentError::Query("unterminated string literal".into()))
+    Err(PraxisError::Query("unterminated string literal".into()))
 }
 
 fn read_operator(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> String {

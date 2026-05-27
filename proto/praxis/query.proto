@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package trident.query.v1;
+package praxis.query.v1;
 
 service Sql { rpc Execute(SqlRequest) returns (SqlResponse); }
 service Graph { rpc Traverse(GraphRequest) returns (GraphResponse); }

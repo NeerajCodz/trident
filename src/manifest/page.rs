@@ -1,4 +1,4 @@
-use crate::errors::{Result, TridentError};
+use crate::errors::{PraxisError, Result};
 use crate::io::{BinaryReader, BinaryWriter, crc32c};
 use crate::manifest::ManifestTrackedFile;
 use std::fs::OpenOptions;
@@ -155,11 +155,11 @@ fn decode_manifest(bytes: &[u8], path: &Path) -> Result<PageLayoutManifest> {
 
 fn read_string(reader: &mut BinaryReader<'_>) -> Result<String> {
     String::from_utf8(reader.read_len_bytes()?)
-        .map_err(|err| TridentError::InvalidConfig(err.to_string()))
+        .map_err(|err| PraxisError::InvalidConfig(err.to_string()))
 }
 
 fn corrupt<T>(path: &Path, reason: &str) -> Result<T> {
-    Err(TridentError::Corrupt {
+    Err(PraxisError::Corrupt {
         path: path.to_path_buf(),
         reason: reason.to_string(),
     })

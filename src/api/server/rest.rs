@@ -1,7 +1,7 @@
 use crate::maintenance::{JobPriority, MaintenanceRuntimeConfig, RuntimeLaneConfig};
 use crate::manifest::ColumnFamilyDescriptor;
 use crate::slog;
-use crate::{ColumnFamily, Result, TridentConfig, TridentEngine, TridentError, WriteBatch};
+use crate::{ColumnFamily, PraxisConfig, PraxisEngine, PraxisError, Result, WriteBatch};
 use axum::body::Bytes as BodyBytes;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -13,13 +13,13 @@ use std::net::SocketAddr;
 
 #[derive(Clone, Debug)]
 pub struct RestServerConfig {
-    pub engine: TridentConfig,
+    pub engine: PraxisConfig,
     pub bind: SocketAddr,
 }
 
 #[derive(Clone)]
 struct RestState {
-    engine: TridentEngine,
+    engine: PraxisEngine,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -28,7 +28,7 @@ struct HealthResponse {
 }
 
 pub async fn serve_rest(config: RestServerConfig) -> Result<()> {
-    let engine = TridentEngine::open(config.engine)?;
+    let engine = PraxisEngine::open(config.engine)?;
     let state = RestState { engine };
     let app = Router::new()
         .route("/health", get(health))
@@ -78,13 +78,13 @@ pub async fn serve_rest(config: RestServerConfig) -> Result<()> {
         .with_state(state);
     let listener = tokio::net::TcpListener::bind(config.bind)
         .await
-        .map_err(|error| TridentError::Server(error.to_string()))?;
+        .map_err(|error| PraxisError::Server(error.to_string()))?;
     axum::serve(listener, app)
         .with_graceful_shutdown(async {
             let _ = tokio::signal::ctrl_c().await;
         })
         .await
-        .map_err(|error| TridentError::Server(error.to_string()))
+        .map_err(|error| PraxisError::Server(error.to_string()))
 }
 
 async fn health() -> Json<HealthResponse> {
@@ -398,8 +398,7 @@ async fn backup(State(state): State<RestState>, Json(request): Json<BackupReques
 
 async fn restore(Json(request): Json<RestoreRequest>) -> Response {
     let started = std::time::Instant::now();
-    let response = match TridentEngine::restore_from_backup(request.backup_dir, request.target_dir)
-    {
+    let response = match PraxisEngine::restore_from_backup(request.backup_dir, request.target_dir) {
         Ok(()) => StatusCode::CREATED.into_response(),
         Err(error) => server_error(error),
     };
@@ -635,34 +634,32 @@ async fn drop_column_family(State(state): State<RestState>, Path(name): Path<Str
     response
 }
 
-fn server_error(error: crate::TridentError) -> Response {
+fn server_error(error: crate::PraxisError) -> Response {
     let (status, code, retryable) = match &error {
-        TridentError::UnknownColumnFamily(_) => {
+        PraxisError::UnknownColumnFamily(_) => {
             (StatusCode::NOT_FOUND, "unknown_column_family", false)
         }
-        TridentError::ColumnFamilyExists(_) => {
-            (StatusCode::CONFLICT, "column_family_exists", false)
-        }
-        TridentError::CannotDropDefaultColumnFamily => (
+        PraxisError::ColumnFamilyExists(_) => (StatusCode::CONFLICT, "column_family_exists", false),
+        PraxisError::CannotDropDefaultColumnFamily => (
             StatusCode::BAD_REQUEST,
             "cannot_drop_default_column_family",
             false,
         ),
-        TridentError::WriteStalled { .. } => (StatusCode::TOO_MANY_REQUESTS, "write_stalled", true),
-        TridentError::Corrupt { .. } => (StatusCode::UNPROCESSABLE_ENTITY, "corrupt_data", false),
-        TridentError::ConfigMismatch(_) => {
+        PraxisError::WriteStalled { .. } => (StatusCode::TOO_MANY_REQUESTS, "write_stalled", true),
+        PraxisError::Corrupt { .. } => (StatusCode::UNPROCESSABLE_ENTITY, "corrupt_data", false),
+        PraxisError::ConfigMismatch(_) => {
             (StatusCode::UNPROCESSABLE_ENTITY, "config_mismatch", false)
         }
-        TridentError::Io(_) => (StatusCode::SERVICE_UNAVAILABLE, "io_error", true),
-        TridentError::MaintenanceRuntimeRunning => {
+        PraxisError::Io(_) => (StatusCode::SERVICE_UNAVAILABLE, "io_error", true),
+        PraxisError::MaintenanceRuntimeRunning => {
             (StatusCode::CONFLICT, "maintenance_runtime_running", false)
         }
-        TridentError::MaintenanceRuntimeNotRunning => (
+        PraxisError::MaintenanceRuntimeNotRunning => (
             StatusCode::CONFLICT,
             "maintenance_runtime_not_running",
             false,
         ),
-        TridentError::MaintenanceJobNotFound(_) => {
+        PraxisError::MaintenanceJobNotFound(_) => {
             (StatusCode::NOT_FOUND, "maintenance_job_not_found", false)
         }
         _ => (StatusCode::INTERNAL_SERVER_ERROR, "internal_error", false),

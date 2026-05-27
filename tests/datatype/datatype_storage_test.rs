@@ -1,11 +1,11 @@
-use trident::datatype::{
-    DataTypeRegistry, ExternalPointer, SegmentFamily, StorageClass, TridentValue, TypeCode,
+use praxis::datatype::{
+    DataTypeRegistry, ExternalPointer, PraxisValue, SegmentFamily, StorageClass, TypeCode,
 };
-use trident::identity::{Cid, Rid};
+use praxis::identity::{Cid, Rid};
 
 #[test]
 fn scalar_values_encode_inline_little_endian() {
-    let encoded = DataTypeRegistry::encode(&TridentValue::Int4(92)).unwrap();
+    let encoded = DataTypeRegistry::encode(&PraxisValue::Int4(92)).unwrap();
 
     assert_eq!(encoded.type_code, TypeCode::Int4);
     assert_eq!(encoded.storage_class, StorageClass::Inline);
@@ -14,8 +14,8 @@ fn scalar_values_encode_inline_little_endian() {
 
 #[test]
 fn text_and_bytea_follow_inline_threshold() {
-    let small = DataTypeRegistry::encode(&TridentValue::Text("hello".into())).unwrap();
-    let large = DataTypeRegistry::encode(&TridentValue::Bytea(vec![7; 257])).unwrap();
+    let small = DataTypeRegistry::encode(&PraxisValue::Text("hello".into())).unwrap();
+    let large = DataTypeRegistry::encode(&PraxisValue::Bytea(vec![7; 257])).unwrap();
 
     assert_eq!(small.storage_class, StorageClass::Inline);
     assert_eq!(large.storage_class, StorageClass::External);
@@ -27,7 +27,7 @@ fn text_and_bytea_follow_inline_threshold() {
 
 #[test]
 fn json_is_external_even_when_small() {
-    let encoded = DataTypeRegistry::encode(&TridentValue::Json(br#"{"a":1}"#.to_vec())).unwrap();
+    let encoded = DataTypeRegistry::encode(&PraxisValue::Json(br#"{"a":1}"#.to_vec())).unwrap();
 
     assert_eq!(encoded.storage_class, StorageClass::External);
     assert_eq!(encoded.type_code, TypeCode::Json);
@@ -35,12 +35,12 @@ fn json_is_external_even_when_small() {
 
 #[test]
 fn vectors_edges_and_fulltext_use_segment_storage() {
-    let vector = DataTypeRegistry::encode(&TridentValue::Vec32 {
+    let vector = DataTypeRegistry::encode(&PraxisValue::Vec32 {
         dims: 3,
         data: vec![1.0, 2.0, 3.0],
     })
     .unwrap();
-    let edge = DataTypeRegistry::encode(&TridentValue::EdgeRef {
+    let edge = DataTypeRegistry::encode(&PraxisValue::EdgeRef {
         source: Rid(1),
         target: Rid(2),
         edge_type: 7,
@@ -48,7 +48,7 @@ fn vectors_edges_and_fulltext_use_segment_storage() {
         created_at: 9,
     })
     .unwrap();
-    let text = DataTypeRegistry::encode(&TridentValue::TsVector(b"token".to_vec())).unwrap();
+    let text = DataTypeRegistry::encode(&PraxisValue::TsVector(b"token".to_vec())).unwrap();
 
     assert!(matches!(
         vector.pointer,
@@ -75,7 +75,7 @@ fn vectors_edges_and_fulltext_use_segment_storage() {
 
 #[test]
 fn rid_ref_is_inline_collection_and_record_identity() {
-    let encoded = DataTypeRegistry::encode(&TridentValue::RidRef {
+    let encoded = DataTypeRegistry::encode(&PraxisValue::RidRef {
         collection: Cid(3),
         rid: Rid(42),
     })

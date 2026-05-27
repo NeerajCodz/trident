@@ -1,6 +1,6 @@
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
-use trident::formats::codecs::FormatCodec;
-use trident::formats::codecs::row::{RowRecord, RowRecordCodec};
+use praxis::formats::codecs::FormatCodec;
+use praxis::formats::codecs::row::{RowRecord, RowRecordCodec};
 
 fn bench_row_codec(c: &mut Criterion) {
     let row = RowRecord {

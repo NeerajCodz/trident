@@ -1,6 +1,6 @@
 pub mod resolver;
 
-pub use resolver::{execute_graphql, GraphQLRequest, GraphQLResponse, GraphQLError};
+pub use resolver::{GraphQLError, GraphQLRequest, GraphQLResponse, execute_graphql};
 
 pub const STORAGE_GRAPHQL_SCHEMA: &str = r#"
 schema {

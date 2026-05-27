@@ -1,5 +1,5 @@
+use praxis::transactions::{EpochGuard, SnapshotRegistry, VersionStamp, VisibilityWatermark};
 use std::sync::atomic::{AtomicU64, Ordering};
-use trident::transactions::{EpochGuard, SnapshotRegistry, VersionStamp, VisibilityWatermark};
 
 #[test]
 fn mvcc_version_visibility_respects_create_and_delete_sequences() {

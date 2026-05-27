@@ -1,4 +1,4 @@
-use crate::errors::{Result, TridentError};
+use crate::errors::{PraxisError, Result};
 use crate::identity::{Cid, Rid};
 use serde::{Deserialize, Serialize};
 
@@ -94,7 +94,7 @@ pub struct EncodedValue {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum TridentValue {
+pub enum PraxisValue {
     Int2(i16),
     Int4(i32),
     Int8(i64),
@@ -141,22 +141,20 @@ pub enum TridentValue {
 pub struct DataTypeRegistry;
 
 impl DataTypeRegistry {
-    pub fn encode(value: &TridentValue) -> Result<EncodedValue> {
+    pub fn encode(value: &PraxisValue) -> Result<EncodedValue> {
         match value {
-            TridentValue::Int2(value) => inline(TypeCode::Int2, value.to_le_bytes()),
-            TridentValue::Int4(value) => inline(TypeCode::Int4, value.to_le_bytes()),
-            TridentValue::Int8(value) => inline(TypeCode::Int8, value.to_le_bytes()),
-            TridentValue::UInt8(value) => inline(TypeCode::UInt8, value.to_le_bytes()),
-            TridentValue::Float4(value) => inline(TypeCode::Float4, value.to_le_bytes()),
-            TridentValue::Float8(value) => inline(TypeCode::Float8, value.to_le_bytes()),
-            TridentValue::Bool(value) => inline(TypeCode::Bool, [u8::from(*value)]),
-            TridentValue::Uuid(value) => inline(TypeCode::Uuid, *value),
-            TridentValue::Date(value) => inline(TypeCode::Date, value.to_le_bytes()),
-            TridentValue::TimeMicros(value) => inline(TypeCode::Time, value.to_le_bytes()),
-            TridentValue::TimestampMicros(value) => {
-                inline(TypeCode::Timestamp, value.to_le_bytes())
-            }
-            TridentValue::Money {
+            PraxisValue::Int2(value) => inline(TypeCode::Int2, value.to_le_bytes()),
+            PraxisValue::Int4(value) => inline(TypeCode::Int4, value.to_le_bytes()),
+            PraxisValue::Int8(value) => inline(TypeCode::Int8, value.to_le_bytes()),
+            PraxisValue::UInt8(value) => inline(TypeCode::UInt8, value.to_le_bytes()),
+            PraxisValue::Float4(value) => inline(TypeCode::Float4, value.to_le_bytes()),
+            PraxisValue::Float8(value) => inline(TypeCode::Float8, value.to_le_bytes()),
+            PraxisValue::Bool(value) => inline(TypeCode::Bool, [u8::from(*value)]),
+            PraxisValue::Uuid(value) => inline(TypeCode::Uuid, *value),
+            PraxisValue::Date(value) => inline(TypeCode::Date, value.to_le_bytes()),
+            PraxisValue::TimeMicros(value) => inline(TypeCode::Time, value.to_le_bytes()),
+            PraxisValue::TimestampMicros(value) => inline(TypeCode::Timestamp, value.to_le_bytes()),
+            PraxisValue::Money {
                 amount,
                 currency,
                 scale,
@@ -167,18 +165,18 @@ impl DataTypeRegistry {
                 bytes.push(*scale);
                 Ok(inline_vec(TypeCode::Money, bytes))
             }
-            TridentValue::Enum(value) => inline(TypeCode::Enum, value.to_le_bytes()),
-            TridentValue::RidRef { collection, rid } => {
+            PraxisValue::Enum(value) => inline(TypeCode::Enum, value.to_le_bytes()),
+            PraxisValue::RidRef { collection, rid } => {
                 let mut bytes = Vec::with_capacity(12);
                 bytes.extend_from_slice(&collection.0.to_le_bytes());
                 bytes.extend_from_slice(&rid.0.to_le_bytes());
                 Ok(inline_vec(TypeCode::RidRef, bytes))
             }
-            TridentValue::Text(value) => varlen(TypeCode::TextInline, value.as_bytes()),
-            TridentValue::Bytea(value) => varlen(TypeCode::Bytea, value),
-            TridentValue::Json(value) => external(TypeCode::Json, value.len() as u32),
-            TridentValue::Jsonb(value) => external(TypeCode::Jsonb, value.len() as u32),
-            TridentValue::List {
+            PraxisValue::Text(value) => varlen(TypeCode::TextInline, value.as_bytes()),
+            PraxisValue::Bytea(value) => varlen(TypeCode::Bytea, value),
+            PraxisValue::Json(value) => external(TypeCode::Json, value.len() as u32),
+            PraxisValue::Jsonb(value) => external(TypeCode::Jsonb, value.len() as u32),
+            PraxisValue::List {
                 element_type,
                 encoded_elements,
             } => {
@@ -192,9 +190,9 @@ impl DataTypeRegistry {
                     external(TypeCode::List, bytes.len() as u32)
                 }
             }
-            TridentValue::Vec32 { dims, data } => {
+            PraxisValue::Vec32 { dims, data } => {
                 if *dims as usize != data.len() {
-                    return Err(TridentError::InvalidConfig(
+                    return Err(PraxisError::InvalidConfig(
                         "vec32 dimensions do not match data length".to_string(),
                     ));
                 }
@@ -204,8 +202,8 @@ impl DataTypeRegistry {
                     data.len() as u32 * 4,
                 )
             }
-            TridentValue::EdgeRef { .. } => segment(TypeCode::EdgeRef, SegmentFamily::Edge, 32),
-            TridentValue::TsVector(bytes) => segment(
+            PraxisValue::EdgeRef { .. } => segment(TypeCode::EdgeRef, SegmentFamily::Edge, 32),
+            PraxisValue::TsVector(bytes) => segment(
                 TypeCode::TsVector,
                 SegmentFamily::FullText,
                 bytes.len() as u32,
@@ -214,7 +212,7 @@ impl DataTypeRegistry {
     }
 }
 
-impl TridentValue {
+impl PraxisValue {
     pub fn payload_bytes(&self) -> Result<Vec<u8>> {
         match self {
             Self::Int2(value) => Ok(value.to_le_bytes().to_vec()),
@@ -257,7 +255,7 @@ impl TridentValue {
             }
             Self::Vec32 { dims, data } => {
                 if *dims as usize != data.len() {
-                    return Err(TridentError::InvalidConfig(
+                    return Err(PraxisError::InvalidConfig(
                         "vec32 dimensions do not match data length".to_string(),
                     ));
                 }

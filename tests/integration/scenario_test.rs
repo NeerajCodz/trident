@@ -6,12 +6,12 @@
 //! - Concurrent reader/writer patterns
 //! - Index compaction under load
 
+use praxis::index::BTreeIndex;
+use praxis::storage::lsm::LsmIndex;
+use praxis::store::{IndexInsert, StorageEngine};
 use std::sync::Arc;
 use std::thread;
 use tempfile::tempdir;
-use trident::index::BTreeIndex;
-use trident::storage::lsm::LsmIndex;
-use trident::store::{IndexInsert, StorageEngine};
 
 // ──────────────────────────────────────────────
 // Multi-Index Scenarios

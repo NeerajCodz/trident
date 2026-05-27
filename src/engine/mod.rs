@@ -5,5 +5,5 @@ pub mod core;
 pub mod read;
 pub mod write;
 
-pub use r#async::AsyncTridentEngine;
-pub use core::engine::TridentEngine;
+pub use r#async::AsyncPraxisEngine;
+pub use core::engine::PraxisEngine;

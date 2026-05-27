@@ -8,10 +8,10 @@ pub use schema::{
 };
 
 use crate::config::Compression;
-use crate::errors::{Result, TridentError};
+use crate::errors::{PraxisError, Result};
 use crate::identity::{Aid, Cid, Did, Eid};
 use crate::io::{BinaryReader, BinaryWriter, crc32c};
-use crate::layout::TridentLayout;
+use crate::layout::PraxisLayout;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -124,17 +124,17 @@ pub struct CatalogSnapshot {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CatalogStore {
-    layout: TridentLayout,
+    layout: PraxisLayout,
 }
 
 impl CatalogStore {
     pub fn open(base: impl Into<PathBuf>) -> Result<Self> {
-        let layout = TridentLayout::new(base);
+        let layout = PraxisLayout::new(base);
         layout.create_all()?;
         Ok(Self { layout })
     }
 
-    pub fn layout(&self) -> &TridentLayout {
+    pub fn layout(&self) -> &PraxisLayout {
         &self.layout
     }
 
@@ -560,7 +560,7 @@ fn decode_users(bytes: &[u8], path: &Path) -> Result<Vec<UserCatalogEntry>> {
 
 fn read_string(reader: &mut BinaryReader<'_>) -> Result<String> {
     let bytes = reader.read_len_bytes()?;
-    String::from_utf8(bytes).map_err(|err| TridentError::InvalidConfig(err.to_string()))
+    String::from_utf8(bytes).map_err(|err| PraxisError::InvalidConfig(err.to_string()))
 }
 
 fn empty_to_none(value: String) -> Option<String> {
@@ -608,7 +608,7 @@ fn tag_to_compression(tag: u8, path: &Path) -> Result<Compression> {
 }
 
 fn corrupt<T>(path: &Path, reason: &str) -> Result<T> {
-    Err(TridentError::Corrupt {
+    Err(PraxisError::Corrupt {
         path: path.to_path_buf(),
         reason: reason.to_string(),
     })

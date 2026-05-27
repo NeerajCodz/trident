@@ -1,12 +1,12 @@
 services:
-  trident:
+  praxis:
     build:
       context: .
       target: runtime
     ports:
       - "7070:7070"
     volumes:
-      - trident-data:/var/lib/trident
+      - praxis-data:/var/lib/praxis
 
 volumes:
-  trident-data:
+  praxis-data:

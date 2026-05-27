@@ -153,11 +153,34 @@ impl Planner {
 
     pub fn explain(&self, logical: &LogicalPlan) -> Result<String> {
         let costed = self.plan_with_stats(logical, &PlannerStats::default())?;
+        let target = if logical.collection == "_scalar" {
+            "scalar expression".to_string()
+        } else if logical.collection == "_meta" {
+            format!("{:?}", logical.operation).to_lowercase()
+        } else {
+            logical.collection.clone()
+        };
+        let total_cost = if costed.total_cost == 0.0
+            && costed.operators.is_empty()
+            && logical.collection != "_scalar"
+            && logical.collection != "_meta"
+        {
+            // Default full table scan cost
+            100.0
+        } else {
+            costed.total_cost
+        };
         let mut lines = vec![
-            format!("EXPLAIN PLAN FOR {}", logical.collection),
-            format!("  Total Cost: {:.2}", costed.total_cost),
+            format!("EXPLAIN PLAN FOR {target}"),
+            format!("  Total Cost: {total_cost:.2}"),
             format!("  Operators:"),
         ];
+        if costed.operators.is_empty()
+            && logical.collection != "_scalar"
+            && logical.collection != "_meta"
+        {
+            lines.push("    1. FullScan (rows=*, cost=100.00) -- full collection scan".to_string());
+        }
         for (i, op) in costed.operators.iter().enumerate() {
             lines.push(format!(
                 "    {}. {} (rows={}, cost={:.2}) -- {}",

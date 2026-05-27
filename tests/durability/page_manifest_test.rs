@@ -1,6 +1,6 @@
-use trident::identity::{Aid, Cid, Eid, FieldId};
-use trident::manifest::PageManifestStore;
-use trident::record::PageRecordStore;
+use praxis::identity::{Aid, Cid, Eid, FieldId};
+use praxis::manifest::PageManifestStore;
+use praxis::record::PageRecordStore;
 
 #[test]
 fn page_record_store_tracks_page_slot_and_directory_artifacts() {

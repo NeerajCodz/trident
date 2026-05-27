@@ -1,5 +1,5 @@
-use trident::index::IndexPlugin;
-use trident::{InvertedIndex, RecordId};
+use praxis::index::IndexPlugin;
+use praxis::{InvertedIndex, RecordId};
 
 #[test]
 fn inverted_index_tokenizes_and_finds_terms() {

@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package trident.storage.v1;
+package praxis.storage.v1;
 
 service StorageAdmin {
   rpc Health(HealthRequest) returns (HealthResponse);

@@ -1,6 +1,6 @@
+use praxis::storage::lsm::{LsmFlushPipeline, MutableMemtable, sstable::SstableReader};
+use praxis::store::RecordId;
 use tempfile::tempdir;
-use trident::storage::lsm::{LsmFlushPipeline, MutableMemtable, sstable::SstableReader};
-use trident::store::RecordId;
 
 #[test]
 fn lsm_flush_pipeline_writes_immutable_memtable_to_sstable() {
